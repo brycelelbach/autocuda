@@ -18,11 +18,6 @@
 
 #include "kernel.cuh"
 
-inline bool operator==(const __half& a, const __half& b)
-{
-    return __half2float(a) == __half2float(b);
-}
-
 inline bool operator==(const cuDoubleComplex& a, const cuDoubleComplex& b)
 {
     return cuCreal(a) == cuCreal(b) && cuCimag(a) == cuCimag(b);
@@ -81,12 +76,12 @@ void run_kernel_bench(nvbench::state& state, T init_src, T init_dst)
     thrust::device_vector<T> src(num_elements, init_src);
     thrust::device_vector<T> dst(num_elements, init_dst);
 
-    const T* src_ptr = thrust::raw_pointer_cast(src.data());
-    T*       dst_ptr = thrust::raw_pointer_cast(dst.data());
+    restrict_span<const T> src_span(thrust::raw_pointer_cast(src.data()), num_elements);
+    restrict_span<T>       dst_span(thrust::raw_pointer_cast(dst.data()), num_elements);
 
     if (running_under_ncu()) {
         const int grid = compute_grid_size(num_elements);
-        kernel<T><<<grid, BLOCK_SIZE>>>(src_ptr, dst_ptr, num_elements);
+        kernel<T><<<grid, BLOCK_SIZE>>>(src_span, dst_span);
         cudaDeviceSynchronize();
         state.skip("Single-shot invocation under Nsight Compute");
         return;
@@ -96,10 +91,10 @@ void run_kernel_bench(nvbench::state& state, T init_src, T init_dst)
     state.add_global_memory_reads<T>(num_elements, "DataSize");
     state.add_global_memory_writes<T>(num_elements, "DataSize");
 
-    state.exec([src_ptr, dst_ptr, num_elements](nvbench::launch& launch) {
+    state.exec([src_span, dst_span, num_elements](nvbench::launch& launch) {
         const int grid = compute_grid_size(num_elements);
         kernel<T><<<grid, BLOCK_SIZE, 0, launch.get_stream()>>>(
-            src_ptr, dst_ptr, num_elements);
+            src_span, dst_span);
     });
 
     thrust::host_vector<T> h_src(src);
