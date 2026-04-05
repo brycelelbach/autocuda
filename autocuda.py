@@ -104,11 +104,15 @@ def build(reconfigure: bool = False) -> bool:
 # ---------------------------------------------------------------------------
 def run_bench(
     bench_timeout: float, metric: str, aggregate: str
-) -> "tuple[float | None, str | None, str]":
-    """Run the benchmark; return (metric_value, unit, error_msg).
+) -> "tuple[float | None, list[tuple[str, float]], str | None, str]":
+    """Run the benchmark; return (aggregate_value, per_variant, unit, error_msg).
 
-    On success *error_msg* is empty.  On failure *metric_value* and *unit* are
-    ``None`` and *error_msg* describes what went wrong.
+    *per_variant* is ``[(state_name, metric_value), ...]`` when JSON parsing
+    succeeds, or ``[]`` when falling back to stdout parsing.
+
+    On success *error_msg* is empty.  On failure *aggregate_value* and *unit*
+    are ``None``, *per_variant* is ``[]``, and *error_msg* describes what went
+    wrong.
 
     *bench_timeout* is the total wall-time budget for the entire nvbench run.
     nvbench's ``--timeout`` is per-state, so we divide by the number of type
@@ -129,18 +133,19 @@ def run_bench(
     except subprocess.TimeoutExpired:
         msg = f"Benchmark killed: exceeded hard timeout ({hard_timeout:.0f}s)"
         print(msg)
-        return None, None, msg
+        return None, [], None, msg
     if r.stdout:
         print(r.stdout[-3000:])
     if r.returncode != 0:
         err = (r.stderr[-2000:] + "\n" + r.stdout[-1000:]).strip()
         print("Benchmark error:\n" + err)
-        return None, None, err
+        return None, [], None, err
 
-    value, unit = parse_metric_json(JSON_OUT, metric, aggregate)
+    per_variant, value, unit = parse_metric_json_detailed(JSON_OUT, metric, aggregate)
     if value is None:
         value, unit = parse_metric_stdout(r.stdout, metric, aggregate)
-    return value, unit, ""
+        per_variant = []
+    return value, per_variant, unit, ""
 
 
 def aggregate_values(values: list[float], aggregate: str) -> float:
@@ -183,21 +188,31 @@ def gmem_total_bytes(summaries: dict) -> "float | None":
 def parse_metric_json(
     json_path: Path, metric: str, aggregate: str
 ) -> "tuple[float, str] | tuple[None, None]":
-    """
-    Extract the selected optimization metric from nvbench JSON output.
+    """Convenience wrapper: returns (aggregate_value, unit) only."""
+    per_variant, agg, unit = parse_metric_json_detailed(json_path, metric, aggregate)
+    if agg is None:
+        return None, None
+    return agg, unit
 
-    Uses batch (hot) measurements for lower variance.  Memory-bandwidth and
-    compute-bandwidth are derived from ``nv/batch/time/gpu/mean`` combined with
-    the declared byte / element counts (``nv/gmem/*`` and ``nv/element_count/*``).
+
+def parse_metric_json_detailed(
+    json_path: Path, metric: str, aggregate: str
+) -> "tuple[list[tuple[str, float]], float, str] | tuple[list, None, None]":
+    """
+    Extract per-variant metric values and their aggregate from nvbench JSON.
+
+    Returns ``(per_variant, aggregate_value, unit)`` on success, where
+    *per_variant* is ``[(state_name, value), ...]``.  On failure returns
+    ``([], None, None)``.
     """
     try:
         with open(json_path) as f:
             data = json.load(f)
     except Exception as exc:
         print(f"JSON parse error: {exc}")
-        return None, None
+        return [], None, None
 
-    raw: list[float] = []
+    per_variant: list[tuple[str, float]] = []
     for bench in data.get("benchmarks", []):
         for state in bench.get("states", []):
             if state.get("is_skipped"):
@@ -208,24 +223,28 @@ def parse_metric_json(
             if batch_time_s is None or batch_time_s <= 0:
                 continue
 
+            state_name = state.get("name", "?")
             if metric == "time":
-                raw.append(batch_time_s * 1000.0)
+                per_variant.append((state_name, batch_time_s * 1000.0))
             elif metric == "memory-bandwidth":
                 total_bytes = gmem_total_bytes(summaries)
                 if not total_bytes:
                     continue
-                raw.append(total_bytes / batch_time_s / (1024 ** 3))
+                per_variant.append(
+                    (state_name, total_bytes / batch_time_s / (1024 ** 3))
+                )
             elif metric == "compute-bandwidth":
                 elems = summary_value(summaries, "nv/element_count/NumElements")
                 if elems is None:
                     continue
-                raw.append(elems / batch_time_s / 1e9)
+                per_variant.append((state_name, elems / batch_time_s / 1e9))
 
-    if not raw:
-        return None, None
+    if not per_variant:
+        return [], None, None
 
+    raw = [v for _, v in per_variant]
     units = {"memory-bandwidth": "GiB/s", "compute-bandwidth": "GFLOP/s", "time": "ms"}
-    return aggregate_values(raw, aggregate), units.get(metric, "")
+    return per_variant, aggregate_values(raw, aggregate), units.get(metric, "")
 
 
 def parse_metric_stdout(
@@ -380,6 +399,150 @@ def metric_delta_str(metric: str, value: float, best: float) -> tuple[str, float
 
 
 # ---------------------------------------------------------------------------
+# LLM-based accept/reject decision
+# ---------------------------------------------------------------------------
+DECISION_SYSTEM_PROMPT = """\
+You are evaluating whether to accept or reject a proposed change to a CUDA \
+kernel that is being iteratively optimized for performance.
+
+## Decision criteria
+
+1. **Performance improvement**: Accept changes that improve the target metric.
+2. **Simplicity trade-off**: Accept changes that simplify the code (fewer \
+lines, clearer logic, higher-level abstractions) even if they cause a \
+minor performance regression.  A small regression is acceptable when the \
+code is meaningfully simpler or more maintainable.
+3. **Mixed variant results**: If some type variants improve and others regress, \
+weigh the overall picture.  A change that substantially improves most variants \
+but slightly regresses one is generally worth keeping.
+4. **No benefit**: Reject changes that neither improve performance nor simplify \
+the code.
+
+## Output format
+
+Return ONLY:
+<decision>accept</decision> or <decision>reject</decision>
+<reasoning>Brief explanation of your decision (1-3 sentences)</reasoning>
+"""
+
+
+def format_variant_table(
+    metric: str,
+    unit: str,
+    aggregate: str,
+    old_per_variant: "list[tuple[str, float]]",
+    new_per_variant: "list[tuple[str, float]]",
+    old_aggregate: float,
+    new_aggregate: float,
+) -> str:
+    """Build a markdown table comparing per-variant and aggregate metrics."""
+    higher_better = metric != "time"
+    direction = "higher is better" if higher_better else "lower is better"
+
+    old_map = dict(old_per_variant)
+    new_map = dict(new_per_variant)
+    all_names = list(dict.fromkeys(
+        [n for n, _ in old_per_variant] + [n for n, _ in new_per_variant]
+    ))
+
+    lines = [
+        f"Metric: {metric} ({unit}, {direction})",
+        f"Aggregate method: {aggregate}",
+        "",
+        "| Variant | Old | New | Delta | % Change |",
+        "|---------|----:|----:|------:|---------:|",
+    ]
+    for name in all_names:
+        ov = old_map.get(name)
+        nv = new_map.get(name)
+        if ov is not None and nv is not None:
+            delta = nv - ov
+            pct = 100.0 * delta / ov if ov != 0 else 0.0
+            lines.append(
+                f"| {name} | {ov:.4f} | {nv:.4f} | {delta:+.4f} | {pct:+.1f}% |"
+            )
+        elif ov is not None:
+            lines.append(f"| {name} | {ov:.4f} | N/A | - | - |")
+        elif nv is not None:
+            lines.append(f"| {name} | N/A | {nv:.4f} | - | - |")
+
+    agg_delta = new_aggregate - old_aggregate
+    agg_pct = 100.0 * agg_delta / old_aggregate if old_aggregate != 0 else 0.0
+    lines.append(
+        f"| **Aggregate ({aggregate})** | **{old_aggregate:.4f}** "
+        f"| **{new_aggregate:.4f}** | **{agg_delta:+.4f}** | **{agg_pct:+.1f}%** |"
+    )
+    return "\n".join(lines)
+
+
+def ask_llm_decision(
+    client: OpenAI,
+    model: str,
+    metric: str,
+    unit: str,
+    aggregate: str,
+    old_kernel: str,
+    new_kernel: str,
+    description: str,
+    old_per_variant: "list[tuple[str, float]]",
+    new_per_variant: "list[tuple[str, float]]",
+    old_aggregate: float,
+    new_aggregate: float,
+) -> "tuple[bool, str]":
+    """Ask the LLM whether to accept or reject a kernel change.
+
+    Returns ``(accept, reasoning)``.  Falls back to the hard-coded
+    ``is_improvement`` check if the LLM response cannot be parsed.
+    """
+    table = format_variant_table(
+        metric, unit, aggregate,
+        old_per_variant, new_per_variant,
+        old_aggregate, new_aggregate,
+    )
+
+    user_msg = (
+        f"## Proposed change\n\n{description}\n\n"
+        f"## Current best kernel\n```cuda\n{old_kernel}\n```\n\n"
+        f"## Proposed kernel\n```cuda\n{new_kernel}\n```\n\n"
+        f"## Performance comparison\n\n{table}\n"
+    )
+
+    try:
+        resp = client.chat.completions.create(
+            model=model,
+            max_tokens=512,
+            messages=[
+                {"role": "system", "content": DECISION_SYSTEM_PROMPT},
+                {"role": "user", "content": user_msg},
+            ],
+        )
+        text = resp.choices[0].message.content
+    except Exception as exc:
+        print(f"LLM decision call failed ({exc}); falling back to metric comparison.")
+        accept = is_improvement(metric, new_aggregate, old_aggregate)
+        return accept, "fallback: LLM call failed"
+
+    accept, reasoning = extract_decision(text)
+    if accept is None:
+        print(f"Could not parse LLM decision; falling back to metric comparison.\n"
+              f"LLM response: {text[:500]}")
+        accept = is_improvement(metric, new_aggregate, old_aggregate)
+        reasoning = "fallback: unparseable LLM response"
+
+    return accept, reasoning
+
+
+def extract_decision(text: str) -> "tuple[bool | None, str]":
+    """Parse ``<decision>accept/reject</decision>`` and ``<reasoning>...</reasoning>``."""
+    dm = re.search(r"<decision>\s*(accept|reject)\s*</decision>", text, re.IGNORECASE)
+    rm = re.search(r"<reasoning>(.*?)</reasoning>", text, re.DOTALL)
+    reasoning = rm.group(1).strip() if rm else ""
+    if dm is None:
+        return None, reasoning
+    return dm.group(1).lower() == "accept", reasoning
+
+
+# ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
 def main() -> None:
@@ -388,9 +551,10 @@ def main() -> None:
 AutoCUDA uses an LLM API to iteratively optimize a CUDA kernel for a target metric
 (memory-bandwidth, compute-bandwidth, or time).  On each iteration it asks the LLM to propose
 an improved version of kernel.cuh, compiles it against the fixed benchmark harness
-bench.cu, measures performance with nvbench, and keeps the change only if the metric
-improves - otherwise it reverts to the best known kernel.  Experiment history
-is logged to a CSV file so the LLM can learn from earlier attempts.
+bench.cu, measures performance with nvbench, and then asks the LLM whether to keep or
+reject the change based on the full per-variant performance breakdown and code
+complexity.  Experiment history is logged to a CSV file so the LLM can learn from
+earlier attempts.
 
 The benchmark is parameterised over several variants; per-variant results
 are reduced to a single scalar via --aggregate (min, mean, or max).
@@ -464,15 +628,20 @@ Usage:
     per_state = args.bench_timeout / NUM_TYPE_VARIANTS
     print(f"\nBaseline measurement ({args.bench_timeout}s total, "
           f"{per_state:.1f}s per type)...")
-    baseline_value, unit, _ = run_bench(args.bench_timeout, args.metric, aggregate)
+    baseline_value, baseline_per_variant, unit, _ = run_bench(
+        args.bench_timeout, args.metric, aggregate
+    )
     if baseline_value is None:
         sys.exit("Baseline benchmark failed.\n")
 
     print(f"\nBaseline: {baseline_value:.4f} {unit}")
+    for vname, vval in baseline_per_variant:
+        print(f"  {vname}: {vval:.4f} {unit}")
     log_result(baseline_value, unit, "baseline", "initial kernel")
 
-    best_value  = baseline_value
-    best_kernel = KERNEL_FILE.read_text()
+    best_value       = baseline_value
+    best_per_variant = baseline_per_variant
+    best_kernel      = KERNEL_FILE.read_text()
 
     # --- optimization loop ---
     limit = args.iterations
@@ -520,7 +689,9 @@ Usage:
             print("Build failed - reverted to best known kernel.")
             continue
 
-        value, _, bench_err = run_bench(args.bench_timeout, args.metric, aggregate)
+        value, per_variant, _, bench_err = run_bench(
+            args.bench_timeout, args.metric, aggregate
+        )
         if value is None:
             log_result(None, unit, "runtime_error", description)
             failed_kernel = new_kernel
@@ -532,18 +703,28 @@ Usage:
 
         delta, delta_pct = metric_delta_str(args.metric, value, best_value)
 
-        if is_improvement(args.metric, value, best_value):
-            status      = "improved"
-            best_value  = value
-            best_kernel = new_kernel
+        accept, reasoning = ask_llm_decision(
+            client, args.model, args.metric, unit, aggregate,
+            best_kernel, new_kernel, description,
+            best_per_variant, per_variant,
+            best_value, value,
+        )
+        print(f"\n  LLM decision: {'ACCEPT' if accept else 'REJECT'}")
+        print(f"  Reasoning: {reasoning}")
+
+        if accept:
+            status           = "accepted"
+            best_value       = value
+            best_per_variant = per_variant
+            best_kernel      = new_kernel
             git_commit_kernel(description, i)
             sign = "faster" if args.metric == "time" else "higher"
-            print(f"\n  IMPROVED  {value:.4f} {unit}  "
+            print(f"  {value:.4f} {unit}  "
                   f"({delta} {unit}, {delta_pct:+.1f}% {sign})")
         else:
-            status = "regressed"
+            status = "rejected"
             KERNEL_FILE.write_text(best_kernel)
-            print(f"\n  regressed  {value:.4f} {unit}  "
+            print(f"  {value:.4f} {unit}  "
                   f"({delta} {unit}, {delta_pct:+.1f}%) - reverted")
 
         log_result(value, unit, status, description)
