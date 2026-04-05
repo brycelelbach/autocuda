@@ -80,30 +80,35 @@ def cmake_configure() -> bool:
     return True
 
 
-def cmake_build() -> bool:
+def cmake_build() -> tuple[bool, str]:
     r = subprocess.run(
         ["cmake", "--build", str(BUILD_DIR), "--parallel"],
         capture_output=True, text=True, cwd=str(REPO),
     )
     if r.returncode != 0:
-        print("Build failed:\n" + r.stderr[-3000:])
-        return False
-    return True
+        err = r.stderr[-3000:]
+        print("Build failed:\n" + err)
+        return False, err
+    return True, ""
 
 
 def build(reconfigure: bool = False) -> bool:
     if reconfigure or not (BUILD_DIR / "CMakeCache.txt").exists():
         if not cmake_configure():
             return False
-    return cmake_build()
+    ok, _ = cmake_build()
+    return ok
 
 # ---------------------------------------------------------------------------
 # Benchmark helpers
 # ---------------------------------------------------------------------------
 def run_bench(
     bench_timeout: float, metric: str, aggregate: str
-) -> "tuple[float, str] | tuple[None, None]":
-    """Run the benchmark; return (metric_value, unit) or (None, None) on failure.
+) -> "tuple[float | None, str | None, str]":
+    """Run the benchmark; return (metric_value, unit, error_msg).
+
+    On success *error_msg* is empty.  On failure *metric_value* and *unit* are
+    ``None`` and *error_msg* describes what went wrong.
 
     *bench_timeout* is the total wall-time budget for the entire nvbench run.
     nvbench's ``--timeout`` is per-state, so we divide by the number of type
@@ -122,18 +127,20 @@ def run_bench(
             timeout=hard_timeout,
         )
     except subprocess.TimeoutExpired:
-        print(f"Benchmark killed: exceeded hard timeout ({hard_timeout:.0f}s)")
-        return None, None
+        msg = f"Benchmark killed: exceeded hard timeout ({hard_timeout:.0f}s)"
+        print(msg)
+        return None, None, msg
     if r.stdout:
         print(r.stdout[-3000:])
     if r.returncode != 0:
-        print("Benchmark error:\n" + r.stderr[-2000:])
-        return None, None
+        err = (r.stderr[-2000:] + "\n" + r.stdout[-1000:]).strip()
+        print("Benchmark error:\n" + err)
+        return None, None, err
 
     value, unit = parse_metric_json(JSON_OUT, metric, aggregate)
     if value is None:
         value, unit = parse_metric_stdout(r.stdout, metric, aggregate)
-    return value, unit
+    return value, unit, ""
 
 
 def aggregate_values(values: list[float], aggregate: str) -> float:
@@ -300,6 +307,9 @@ def ask_llm(
     metric: str,
     unit: str,
     aggregate: str,
+    failed_kernel: "str | None" = None,
+    failure_reason: str = "",
+    failure_output: str = "",
 ) -> str:
     kernel  = KERNEL_FILE.read_text()
     history = read_results()
@@ -308,13 +318,27 @@ def ask_llm(
         if metric == "time"
         else f"maximise the metric ({unit}, higher is better)"
     )
-    user_msg = (
+
+    parts: list[str] = []
+
+    if failed_kernel is not None:
+        parts.append(
+            f"WARNING: Your previous iteration FAILED ({failure_reason}).\n\n"
+            f"Error output:\n```\n{failure_output[-3000:]}\n```\n\n"
+            f"The failed kernel you proposed:\n```cuda\n{failed_kernel}\n```\n\n"
+            "You MUST fix the issues in your next proposal. "
+            "kernel.cuh has been reverted to the last known good version shown below.\n\n"
+        )
+
+    parts.append(
         f"Optimization target: --metric {metric} - {goal}\n"
         f"Reported values use --aggregate {aggregate} across benchmark states.\n\n"
         f"Current kernel.cuh:\n```cuda\n{kernel}\n```\n\n"
         f"Experiment history (values are in {unit}):\n```\n{history}\n```\n\n"
         f"This is iteration {iteration}. Propose the next improvement."
     )
+
+    user_msg = "".join(parts)
     resp = client.chat.completions.create(
         model=model,
         max_tokens=4096,
@@ -440,7 +464,7 @@ Usage:
     per_state = args.bench_timeout / NUM_TYPE_VARIANTS
     print(f"\nBaseline measurement ({args.bench_timeout}s total, "
           f"{per_state:.1f}s per type)...")
-    baseline_value, unit = run_bench(args.bench_timeout, args.metric, aggregate)
+    baseline_value, unit, _ = run_bench(args.bench_timeout, args.metric, aggregate)
     if baseline_value is None:
         sys.exit("Baseline benchmark failed.\n")
 
@@ -452,16 +476,29 @@ Usage:
 
     # --- optimization loop ---
     limit = args.iterations
+    failed_kernel: str | None = None
+    failure_reason = ""
+    failure_output = ""
+
     for i in count(1):
         if i > limit:
             break
         sep = "=" * 60
         print(f"\n{sep}")
         tag = f"{i}" if math.isinf(limit) else f"{i}/{int(limit)}"
-        print(f"Iteration {tag}   best so far: {best_value:.4f} {unit}")
+        print(f"Iteration {tag} best so far: {best_value:.4f} {unit}")
         print(sep)
 
-        response    = ask_llm(client, args.model, i, args.metric, unit, aggregate)
+        response = ask_llm(
+            client, args.model, i, args.metric, unit, aggregate,
+            failed_kernel=failed_kernel,
+            failure_reason=failure_reason,
+            failure_output=failure_output,
+        )
+        failed_kernel = None
+        failure_reason = ""
+        failure_output = ""
+
         new_kernel  = extract_kernel(response)
         description = extract_description(response)
 
@@ -473,17 +510,24 @@ Usage:
         print(f"\nTrying: {description}\n")
         KERNEL_FILE.write_text(new_kernel)
 
-        if not cmake_build():
+        build_ok, build_err = cmake_build()
+        if not build_ok:
             log_result(None, unit, "build_error", description)
+            failed_kernel = new_kernel
+            failure_reason = "build_error"
+            failure_output = build_err
             KERNEL_FILE.write_text(best_kernel)
             print("Build failed - reverted to best known kernel.")
             continue
 
-        value, _ = run_bench(args.bench_timeout, args.metric, aggregate)
+        value, _, bench_err = run_bench(args.bench_timeout, args.metric, aggregate)
         if value is None:
             log_result(None, unit, "runtime_error", description)
+            failed_kernel = new_kernel
+            failure_reason = "runtime_error"
+            failure_output = bench_err
             KERNEL_FILE.write_text(best_kernel)
-            print("Benchmark failed - reverted.")
+            print("Benchmark/validation failed - reverted.")
             continue
 
         delta, delta_pct = metric_delta_str(args.metric, value, best_value)
