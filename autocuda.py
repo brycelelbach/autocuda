@@ -404,9 +404,10 @@ Usage:
         "Defaults: min for --metric bandwidth (bottleneck type), "
         "max for --metric time (slowest type).",
     )
-    ap.add_argument("--tag", type=str, default=None,
+    default_tag = date.today().isoformat()
+    ap.add_argument("--tag", type=str, default=default_tag,
                     help="run tag for the git branch autoresearch/<tag> "
-                    "(default: today's date, e.g. 2026-04-05)")
+                    f"(default: {default_tag})")
     ap.add_argument("--model", type=str, default=DEFAULT_MODEL,
                     help=f"model identifier (default: {DEFAULT_MODEL})")
     ap.add_argument("--api-key", type=str, default=None,
@@ -425,7 +426,7 @@ Usage:
         aggregate = "max" if args.metric == "time" else "min"
 
     # --- git branch ---
-    tag = args.tag or date.today().isoformat()
+    tag = args.tag
     git_create_branch(tag)
 
     # --- initial build ---
