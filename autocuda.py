@@ -12,7 +12,7 @@ from datetime import date, datetime
 from itertools import count
 from pathlib import Path
 
-import anthropic
+from openai import OpenAI
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -24,7 +24,8 @@ BUILD_DIR    = REPO / "build"
 BENCH_BIN    = BUILD_DIR / "bench"
 JSON_OUT     = BUILD_DIR / "_bench_result.json"
 
-MODEL = "claude-opus-4-6"
+BASE_URL = "https://inference-api.nvidia.com/v1/"
+DEFAULT_MODEL = "aws/anthropic/bedrock-claude-opus-4-6"
 
 # Must match the element_types list in bench.cu.
 NUM_TYPE_VARIANTS = 5
@@ -290,10 +291,11 @@ def read_results() -> str:
     return RESULTS_FILE.read_text() if RESULTS_FILE.exists() else "(none)"
 
 # ---------------------------------------------------------------------------
-# Claude interaction
+# LLM interaction
 # ---------------------------------------------------------------------------
-def ask_claude(
-    client: anthropic.Anthropic,
+def ask_llm(
+    client: OpenAI,
+    model: str,
     iteration: int,
     metric: str,
     unit: str,
@@ -313,13 +315,15 @@ def ask_claude(
         f"Experiment history (values are in {unit}):\n```\n{history}\n```\n\n"
         f"This is iteration {iteration}. Propose the next improvement."
     )
-    resp = client.messages.create(
-        model=MODEL,
+    resp = client.chat.completions.create(
+        model=model,
         max_tokens=4096,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_msg}],
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_msg},
+        ],
     )
-    return resp.content[0].text
+    return resp.choices[0].message.content
 
 
 def extract_kernel(text: str) -> "str | None":
@@ -358,7 +362,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(
         description="""
 AutoCUDA uses an LLM API to iteratively optimise a CUDA kernel for a target metric
-(bandwidth, FLOPS, or execution time).  On each iteration it asks the LLOM to propose
+(bandwidth, FLOPS, or execution time).  On each iteration it asks the LLM to propose
 an improved version of kernel.cuh, compiles it against the fixed benchmark harness
 bench.cu, measures performance with nvbench, and keeps the change only if the metric
 improves - otherwise it reverts to the best known kernel.  Experiment history
@@ -368,7 +372,7 @@ The benchmark is parameterised over several element types; per-type results
 are reduced to a single scalar via --aggregate (min, mean, or max).
 
 Usage:
-    export ANTHROPIC_API_KEY=sk-ant-...
+    export NVIDIA_API_KEY_AUTOCUDA=...
     python autocuda.py [--metric bandwidth|time|flops] [--iterations N|inf]
                        [--bench-timeout SEC] [--aggregate min|mean|max]
 """
@@ -403,15 +407,17 @@ Usage:
     ap.add_argument("--tag", type=str, default=None,
                     help="run tag for the git branch autoresearch/<tag> "
                     "(default: today's date, e.g. 2026-04-05)")
+    ap.add_argument("--model", type=str, default=DEFAULT_MODEL,
+                    help=f"model identifier (default: {DEFAULT_MODEL})")
     ap.add_argument("--api-key", type=str, default=None,
-                    help="Anthropic API key (overrides ANTHROPIC_API_KEY env var)")
+                    help="NVIDIA inference API key (overrides NVIDIA_API_KEY_AUTOCUDA env var)")
     args = ap.parse_args()
 
-    api_key = args.api_key or os.environ.get("ANTHROPIC_API_KEY")
+    api_key = args.api_key or os.environ.get("NVIDIA_API_KEY_AUTOCUDA")
     if not api_key:
-        sys.exit("Error: set ANTHROPIC_API_KEY or pass --api-key")
+        sys.exit("Error: set NVIDIA_API_KEY_AUTOCUDA or pass --api-key")
 
-    client = anthropic.Anthropic(api_key=api_key)
+    client = OpenAI(base_url=BASE_URL, api_key=api_key)
     init_results()
 
     aggregate = args.aggregate
@@ -457,12 +463,12 @@ Usage:
         print(f"Iteration {tag}   best so far: {best_value:.4f} {unit}")
         print(sep)
 
-        response    = ask_claude(client, i, args.metric, unit, aggregate)
+        response    = ask_llm(client, args.model, i, args.metric, unit, aggregate)
         new_kernel  = extract_kernel(response)
         description = extract_description(response)
 
         if new_kernel is None:
-            print("No <kernel> block found in Claude response - skipping.")
+            print("No <kernel> block found in LLM response - skipping.")
             log_result(None, unit, "parse_error", "no <kernel> block in response")
             continue
 
