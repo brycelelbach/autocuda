@@ -360,7 +360,7 @@ def ask_llm(
     user_msg = "".join(parts)
     resp = client.chat.completions.create(
         model=model,
-        max_tokens=4096,
+        max_tokens=65536,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_msg},
