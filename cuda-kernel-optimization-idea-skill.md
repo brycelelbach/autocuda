@@ -12,7 +12,7 @@ You receive:
 
 The benchmark harness (`bench.cu`) and build system are fixed. The repo is small - read `bench.cu` and `kernel.cuh` for full context on the benchmark structure, data sizes, and the interface contract.
 
-The harness benchmarks the kernel across multiple element types (int8, fp16, fp32, fp64, complex fp64) using nvbench. When it produces multiple measurements (one per element type), they are combined with `--aggregate` (default: `min` for bandwidth, `max` for time).
+The harness benchmarks the kernel across multiple element types (int8, fp16, fp32, fp64, complex fp64) using nvbench. When it produces multiple measurements (one per element type), they are combined with `--aggregate` (default: `min` for memory-bandwidth, `max` for time).
 
 ## What you CAN do
 
@@ -31,9 +31,9 @@ The harness benchmarks the kernel across multiple element types (int8, fp16, fp3
 
 | `--metric` | Unit | Goal |
 |------------|------|------|
-| `bandwidth` | GiB/s | Higher is better |
+| `memory-bandwidth` | GiB/s | Higher is better |
+| `compute-bandwidth` | GFLOP/s | Higher is better |
 | `time` | ms | Lower is better |
-| `flops` | GFLOP/s | Higher is better |
 
 **Simplicity**: All else being equal, simpler is better. A small improvement that adds ugly complexity is not worth it. Conversely, removing something and getting equal or better results is a great outcome - that's a simplification win. When evaluating a change, weigh the complexity cost against the improvement magnitude. A tiny improvement that adds 20 lines of hacky template metaprogramming? Probably not worth it. A tiny improvement from deleting code? Definitely keep. Equal performance with much simpler code? Keep.
 

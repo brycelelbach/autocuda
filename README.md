@@ -28,12 +28,12 @@ The optimization target is configurable:
 
 | `--metric` | What is optimized | Unit | Direction |
 |------------|-------------------|------|-----------|
-| `bandwidth` (default) | Global memory bandwidth | GiB/s | Higher is better |
+| `memory-bandwidth` (default) | Global memory bandwidth | GiB/s | Higher is better |
+| `compute-bandwidth` | Throughput (via `add_element_count`) | GFLOP/s | Higher is better |
 | `time` | Mean GPU time | ms | Lower is better |
-| `flops` | Throughput (via `add_element_count`) | GFLOP/s | Higher is better |
 
 When the harness produces multiple measurements, `--aggregate` controls how they
-are combined into a single scalar (defaults: `min` for bandwidth, `max` for
+are combined into a single scalar (defaults: `min` for memory-bandwidth, `max` for
 time).
 
 ## Quick start
@@ -51,7 +51,7 @@ cmake --build build --parallel
 
 # 3. Run the autonomous optimizer
 export ANTHROPIC_API_KEY=sk-ant-...
-python autocuda.py --metric bandwidth --iterations 30
+python autocuda.py --metric memory-bandwidth --iterations 30
 ```
 
 ## Running the agent
@@ -63,7 +63,7 @@ it asks Claude for one kernel change, applies it, benchmarks, and keeps or
 reverts.
 
 ```bash
-python autocuda.py --metric bandwidth --iterations 30
+python autocuda.py --metric memory-bandwidth --iterations 30
 python autocuda.py --metric time --iterations 20 --bench-timeout 30
 ```
 

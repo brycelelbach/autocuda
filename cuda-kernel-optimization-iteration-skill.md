@@ -21,7 +21,7 @@ To set up a new experiment, work with the user to:
 1. **Agree on a run tag:** propose a tag based on today's date (e.g. `2026-04-05`). The branch `autocuda/<tag>` must not already exist - this is a fresh run.
 2. **Create the branch:** `git checkout -b autocuda/<tag>` from current `main`. Every successful experiment will be committed to this branch (see **The experiment loop** below).
 3. **Read the in-scope files.** The repo is small; read the files listed in project layout.
-4. **Agree on the optimization target** with the user: bandwidth (GiB/s, higher is better), time (ms, lower is better), or FLOP/s (GFLOP/s, higher is better).
+4. **Agree on the optimization target** with the user: memory-bandwidth (GiB/s, higher is better), compute-bandwidth (GFLOP/s, higher is better), or time (ms, lower is better).
 5. **Build the benchmark:** `cmake -B build -S . -DCMAKE_BUILD_TYPE=Release && cmake --build build --parallel`
 6. **Verify the benchmark runs:** `./build/bench`
 7. **Initialize `results.csv`** with just the header row (`timestamp,metric_value,unit,status,description`). The baseline will be recorded after the first run.

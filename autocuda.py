@@ -27,7 +27,7 @@ JSON_OUT     = BUILD_DIR / "_bench_result.json"
 BASE_URL = "https://inference-api.nvidia.com/v1/"
 DEFAULT_MODEL = "aws/anthropic/bedrock-claude-opus-4-6"
 
-# Must match the element_types list in bench.cu.
+# Must match the number of type variants in bench.cu.
 NUM_TYPE_VARIANTS = 5
 
 # ---------------------------------------------------------------------------
@@ -62,7 +62,7 @@ def git_create_branch(tag: str) -> None:
 def git_commit_kernel(description: str, iteration: int) -> None:
     """Stage ``kernel.cuh`` and commit with the iteration description."""
     _git("add", str(KERNEL_FILE.relative_to(REPO)))
-    _git("commit", "-m", f"iteration {iteration}: {description}", check=False)
+    _git("commit", "-m", f"AutoCUDA Iteration {iteration}: {description}", check=False)
 
 
 # ---------------------------------------------------------------------------
@@ -179,9 +179,9 @@ def parse_metric_json(
     """
     Extract the selected optimization metric from nvbench JSON output.
 
-    Uses batch (hot) measurements for lower variance.  Bandwidth and flops
-    are derived from ``nv/batch/time/gpu/mean`` combined with the declared
-    byte / element counts (``nv/gmem/*`` and ``nv/element_count/*``).
+    Uses batch (hot) measurements for lower variance.  Memory-bandwidth and
+    compute-bandwidth are derived from ``nv/batch/time/gpu/mean`` combined with
+    the declared byte / element counts (``nv/gmem/*`` and ``nv/element_count/*``).
     """
     try:
         with open(json_path) as f:
@@ -203,12 +203,12 @@ def parse_metric_json(
 
             if metric == "time":
                 raw.append(batch_time_s * 1000.0)
-            elif metric == "bandwidth":
+            elif metric == "memory-bandwidth":
                 total_bytes = gmem_total_bytes(summaries)
                 if not total_bytes:
                     continue
                 raw.append(total_bytes / batch_time_s / (1024 ** 3))
-            elif metric == "flops":
+            elif metric == "compute-bandwidth":
                 elems = summary_value(summaries, "nv/element_count/NumElements")
                 if elems is None:
                     continue
@@ -217,7 +217,7 @@ def parse_metric_json(
     if not raw:
         return None, None
 
-    units = {"time": "ms", "bandwidth": "GiB/s", "flops": "GFLOP/s"}
+    units = {"memory-bandwidth": "GiB/s", "compute-bandwidth": "GFLOP/s", "time": "ms"}
     return aggregate_values(raw, aggregate), units.get(metric, "")
 
 
@@ -225,7 +225,7 @@ def parse_metric_stdout(
     stdout: str, metric: str, aggregate: str
 ) -> "tuple[float, str] | tuple[None, None]":
     """Fallback: extract metric from nvbench markdown stdout (all benchmark tables)."""
-    if metric == "bandwidth":
+    if metric == "memory-bandwidth":
         vals = []
         for m in re.finditer(
             r"(\d[\d.]*)\s*(GiB/s|GB/s|TB/s)\b", stdout, re.IGNORECASE
@@ -336,7 +336,7 @@ def extract_description(text: str) -> str:
     return m.group(1).strip() if m else "no description"
 
 # ---------------------------------------------------------------------------
-# Metric comparison (time: lower is better; bandwidth: higher is better)
+# Metric comparison (time: lower is better; memory-bandwidth/compute-bandwidth: higher is better)
 # ---------------------------------------------------------------------------
 def is_improvement(metric: str, value: float, best: float) -> bool:
     if metric == "time":
@@ -362,18 +362,18 @@ def main() -> None:
     ap = argparse.ArgumentParser(
         description="""
 AutoCUDA uses an LLM API to iteratively optimize a CUDA kernel for a target metric
-(bandwidth, FLOPS, or execution time).  On each iteration it asks the LLM to propose
+(memory-bandwidth, compute-bandwidth, or time).  On each iteration it asks the LLM to propose
 an improved version of kernel.cuh, compiles it against the fixed benchmark harness
 bench.cu, measures performance with nvbench, and keeps the change only if the metric
 improves - otherwise it reverts to the best known kernel.  Experiment history
 is logged to a CSV file so the LLM can learn from earlier attempts.
 
-The benchmark is parameterised over several element types; per-type results
+The benchmark is parameterised over several variants; per-variant results
 are reduced to a single scalar via --aggregate (min, mean, or max).
 
 Usage:
     export NVIDIA_API_KEY_AUTOCUDA=...
-    python autocuda.py [--metric bandwidth|time|flops] [--iterations N|inf]
+    python autocuda.py [--metric memory-bandwidth|compute-bandwidth|time] [--iterations N|inf]
                        [--bench-timeout SEC] [--aggregate min|mean|max]
 """
     )
@@ -389,9 +389,9 @@ Usage:
                     help="number of optimization iterations, or 'inf' to run forever (default: inf)")
     ap.add_argument(
         "--metric", "-m",
-        choices=("bandwidth", "time", "flops"),
-        default="bandwidth",
-        help="optimization target: batch bandwidth (GiB/s), batch time (ms), or flops (GFLOP/s)",
+        choices=("memory-bandwidth", "compute-bandwidth", "time"),
+        default="memory-bandwidth",
+        help="optimization target: memory-bandwidth (GiB/s), compute-bandwidth (GFLOP/s), or time (ms)",
     )
     ap.add_argument("--bench-timeout", type=float, default=15.0,
                     help="total wall-time budget for each nvbench run in seconds; "
@@ -399,10 +399,9 @@ Usage:
     ap.add_argument(
         "--aggregate", "-a",
         choices=("min", "mean", "max"),
-        default=None,
-        help="combine metrics from each element-type benchmark: min, mean, or max. "
-        "Defaults: min for --metric bandwidth (bottleneck type), "
-        "max for --metric time (slowest type).",
+        default="mean",
+        help="how metrics from different benchmark variants should be combined: min, mean, or max "
+        "(default: mean).",
     )
     default_tag = date.today().isoformat()
     ap.add_argument("--tag", type=str, default=default_tag,
@@ -422,8 +421,6 @@ Usage:
     init_results()
 
     aggregate = args.aggregate
-    if aggregate is None:
-        aggregate = "max" if args.metric == "time" else "min"
 
     # --- git branch ---
     tag = args.tag

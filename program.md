@@ -26,11 +26,11 @@ The optimization target is chosen when running `autocuda.py`:
 
 | `--metric` | What is optimized | Notes |
 |------------|-------------------|--------|
-| `bandwidth` (default) | **GlobalMem BW (GiB/s)** | Higher is better |
-| `flops` | **FLOP/s (GFLOP/s)** | Higher is better; requires `FLOPS_PER_ELEMENT > 0` |
+| `memory-bandwidth` (default) | **GlobalMem BW (GiB/s)** | Higher is better |
+| `compute-bandwidth` | **FLOP/s (GFLOP/s)** | Higher is better; requires `FLOPS_PER_ELEMENT > 0` |
 | `time` | **Mean GPU time (ms)** | Lower is better |
 
-nvbench output includes timing and bandwidth; the FLOP/s summary appears when
+nvbench output includes timing and memory-bandwidth; the FLOP/s summary appears when
 `FLOPS_PER_ELEMENT > 0`.
 
 ## Kernel interface contract
@@ -54,10 +54,10 @@ The kernel may reinterpret the `float*` pointers internally (e.g. as `float4*`).
 
 ---
 
-## Example: bandwidth kernel (default)
+## Example: memory-bandwidth kernel (default)
 
 ```cuda
-// FLOPS_PER_ELEMENT = 0 → no FLOP/s summary (optimize bandwidth or time via --metric)
+// FLOPS_PER_ELEMENT = 0 → no FLOP/s summary (optimize memory-bandwidth or time via --metric)
 static constexpr std::size_t FLOPS_PER_ELEMENT = 0;
 static constexpr int BLOCK_SIZE = 256;
 
@@ -110,8 +110,8 @@ inline int compute_grid_size(std::size_t n) {
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-python autocuda.py --metric bandwidth --iterations 30
-# or: --metric flops   /   --metric time
+python autocuda.py --metric memory-bandwidth --iterations 30
+# or: --metric compute-bandwidth   /   --metric time
 ```
 
 Each iteration:
@@ -156,7 +156,7 @@ Look at `GlobalMem BW`, `GPU Time`, and (if `FLOPS_PER_ELEMENT > 0`) `FLOP/s` in
    ```
 8. Repeat.
 
-### Bandwidth optimization ideas
+### Memory-bandwidth optimization ideas
 
 1. **Vectorised 128-bit loads** - cast `float*` to `float4*`; each thread copies
    4 floats per load/store. Adjust `compute_grid_size` to divide by 4.
@@ -165,7 +165,7 @@ Look at `GlobalMem BW`, `GPU Time`, and (if `FLOPS_PER_ELEMENT > 0`) `FLOP/s` in
 4. **Multiple elements per thread** - wider grid-stride loop.
 5. **Loop unrolling** - `#pragma unroll 4`.
 
-### Compute (FLOP/s) optimization ideas
+### Compute-bandwidth optimization ideas
 
 1. **Increase arithmetic intensity** - more FMAs per element, update `FLOPS_PER_ELEMENT`.
 2. **Independent FMA chains** - multiple independent accumulators per thread to
