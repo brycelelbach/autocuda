@@ -5,17 +5,36 @@
  * complex fp64. Only kernel.cuh is meant to be modified for kernel logic.
  */
 
+#include <algorithm>
 #include <cstdint>
+#include <cstdlib>
+#include <stdexcept>
 
 #include <cuComplex.h>
 #include <cuda_fp16.h>
 #include <nvbench/nvbench.cuh>
 #include <thrust/device_vector.h>
+#include <thrust/host_vector.h>
 
 #include "kernel.cuh"
 
+inline bool operator==(const __half& a, const __half& b)
+{
+    return __half2float(a) == __half2float(b);
+}
+
+inline bool operator==(const cuDoubleComplex& a, const cuDoubleComplex& b)
+{
+    return cuCreal(a) == cuCreal(b) && cuCimag(a) == cuCimag(b);
+}
+
 // 256 MiB total traffic per type - element count scales with sizeof(T).
 static constexpr std::size_t DATA_BYTES = 256ULL * 1024 * 1024;
+
+static bool running_under_ncu()
+{
+    return std::getenv("NV_COMPUTE_PROFILER_PERFWORKS_DIR") != nullptr;
+}
 
 template<typename T>
 struct bench_fill;
@@ -62,18 +81,31 @@ void run_kernel_bench(nvbench::state& state, T init_src, T init_dst)
     thrust::device_vector<T> src(num_elements, init_src);
     thrust::device_vector<T> dst(num_elements, init_dst);
 
+    const T* src_ptr = thrust::raw_pointer_cast(src.data());
+    T*       dst_ptr = thrust::raw_pointer_cast(dst.data());
+
+    if (running_under_ncu()) {
+        const int grid = compute_grid_size(num_elements);
+        kernel<T><<<grid, BLOCK_SIZE>>>(src_ptr, dst_ptr, num_elements);
+        cudaDeviceSynchronize();
+        state.skip("Single-shot invocation under Nsight Compute");
+        return;
+    }
+
     state.add_element_count(num_elements, "NumElements");
     state.add_global_memory_reads<T>(num_elements, "DataSize");
     state.add_global_memory_writes<T>(num_elements, "DataSize");
-
-    const T* src_ptr = thrust::raw_pointer_cast(src.data());
-    T*       dst_ptr = thrust::raw_pointer_cast(dst.data());
 
     state.exec([src_ptr, dst_ptr, num_elements](nvbench::launch& launch) {
         const int grid = compute_grid_size(num_elements);
         kernel<T><<<grid, BLOCK_SIZE, 0, launch.get_stream()>>>(
             src_ptr, dst_ptr, num_elements);
     });
+
+    thrust::host_vector<T> h_src(src);
+    thrust::host_vector<T> h_dst(dst);
+    if (!std::equal(h_src.begin(), h_src.end(), h_dst.begin()))
+        throw std::runtime_error("Correctness check failed: dst != src");
 }
 
 using element_types = nvbench::type_list<int8_t, __half, float, double, cuDoubleComplex>;
