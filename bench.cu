@@ -18,6 +18,9 @@
 
 #include "kernel.cuh"
 
+NVBENCH_DECLARE_TYPE_STRINGS(__half, "F16", "half precision float");
+NVBENCH_DECLARE_TYPE_STRINGS(cuDoubleComplex, "C128", "double precision complex");
+
 inline bool operator==(const cuDoubleComplex& a, const cuDoubleComplex& b)
 {
     return cuCreal(a) == cuCreal(b) && cuCimag(a) == cuCimag(b);
