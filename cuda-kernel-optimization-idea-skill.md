@@ -39,6 +39,26 @@ The harness benchmarks the kernel across multiple element types (int8, fp16, fp3
 
 **Abstraction level**: Prefer higher-level, more concise CCCL/CUB abstractions over hand-rolled equivalents. They are more portable, less error-prone, and usually well-tuned already. Only drop down to lower-level primitives (raw shared memory, inline PTX, manual warp shuffles, etc.) when you have evidence that the high-level version is the bottleneck. "I can write it by hand" is not a reason - "the CUB version leaves measurable performance on the table" is.
 
+## Profiling with NCU
+
+When you need hard data on what limits performance, use NVIDIA Nsight Compute (NCU) to profile the kernel. NCU adds massive overhead per kernel launch, so narrow the run to a single configuration. Read `bench.cu` to determine the benchmark name and any axes, then use nvbench CLI flags (`--benchmark`, `-a`) to select one variant:
+
+```bash
+ncu --set full ./build/bench --benchmark <bench_name> -a <axis>=<value>
+```
+
+If the benchmark has no axes, just filter by benchmark name. Add `-o profile` to save a `profile.ncu-rep` file for the Nsight Compute UI, or omit it to dump metrics directly to the terminal.
+
+Key metrics to look at:
+
+- **Memory throughput** (`dram__bytes.sum.per_second`): how close to peak memory bandwidth.
+- **Compute throughput** (`sm__throughput.avg.pct_of_peak_sustained_elapsed`): SM utilization.
+- **Occupancy** (`launch__occupancy`): achieved vs theoretical occupancy.
+- **Stall reasons** (`smsp__warps_issue_stalled_*`): what warps are waiting on (memory, execution, synchronization, etc.).
+- **L1/L2 hit rates**: whether caching is effective.
+
+Use these to confirm or refute your bottleneck hypothesis before committing to a complex optimization.
+
 ## Hypothesis-driven, not checklist-driven
 
 Do not follow a fixed checklist of optimization tricks. Infer what to try next from the evidence:

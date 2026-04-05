@@ -87,6 +87,8 @@ LOOP FOREVER:
 
 The branch's git log should be a clean record of every winning kernel change. Regressions, build errors, and runtime errors are reverted and never committed.
 
+**Profiling**: If you're stuck or need to confirm a bottleneck hypothesis, profile with NCU as described in `cuda-kernel-optimization-idea-skill.md`. This is optional and heavyweight - don't do it every iteration, only when the numbers surprise you or obvious ideas are exhausted.
+
 **Timeout**: Each benchmark should take ~15s total. If a run exceeds a minute, kill it and treat it as a failure (revert and log as `runtime_error`).
 
 **Crashes**: Use your judgment. If it's something dumb and easy to fix (a typo, a missing include), fix it and re-run. If the idea itself is fundamentally broken, revert, log it (`build_error` or `runtime_error`), and move on.
