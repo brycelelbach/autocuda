@@ -1,0 +1,15 @@
+# CMake / build
+/build/
+
+# Editor / dev (symlink to build/compile_commands.json)
+/compile_commands.json
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Cursor / Claude Code local config
+.claude/
