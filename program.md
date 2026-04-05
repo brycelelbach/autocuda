@@ -17,14 +17,14 @@ GPU kernel performance instead of language model optimization.
 
 ## Metrics
 
-`FLOPS_PER_ELEMENT` does **not** choose what you optimise - it only declares how
+`FLOPS_PER_ELEMENT` does **not** choose what you optimize - it only declares how
 many floating-point operations you count **per float** so `bench.cu` can report
 FLOP/s (`N × NUM_FLOATS / mean GPU time`) when `N > 0`. A kernel can be
 memory-bound and still have `FLOPS_PER_ELEMENT > 0`.
 
-The optimisation target is chosen when running `autocuda.py`:
+The optimization target is chosen when running `autocuda.py`:
 
-| `--metric` | What is optimised | Notes |
+| `--metric` | What is optimized | Notes |
 |------------|-------------------|--------|
 | `bandwidth` (default) | **GlobalMem BW (GiB/s)** | Higher is better |
 | `flops` | **FLOP/s (GFLOP/s)** | Higher is better; requires `FLOPS_PER_ELEMENT > 0` |
@@ -57,7 +57,7 @@ The kernel may reinterpret the `float*` pointers internally (e.g. as `float4*`).
 ## Example: bandwidth kernel (default)
 
 ```cuda
-// FLOPS_PER_ELEMENT = 0 → no FLOP/s summary (optimise bandwidth or time via --metric)
+// FLOPS_PER_ELEMENT = 0 → no FLOP/s summary (optimize bandwidth or time via --metric)
 static constexpr std::size_t FLOPS_PER_ELEMENT = 0;
 static constexpr int BLOCK_SIZE = 256;
 
@@ -145,7 +145,7 @@ Look at `GlobalMem BW`, `GPU Time`, and (if `FLOPS_PER_ELEMENT > 0`) `FLOP/s` in
 ### Workflow
 
 1. Read the current `kernel.cuh` and the `results.csv` log.
-2. Choose one optimisation to try (see ideas below).
+2. Choose one optimization to try (see ideas below).
 3. Edit `kernel.cuh`.
 4. Run `cmake --build build --parallel && ./build/bench`.
 5. If the chosen metric improved (higher BW/FLOP/s, or lower GPU time): keep the change, log it as `improved`.
@@ -156,7 +156,7 @@ Look at `GlobalMem BW`, `GPU Time`, and (if `FLOPS_PER_ELEMENT > 0`) `FLOP/s` in
    ```
 8. Repeat.
 
-### Bandwidth optimisation ideas
+### Bandwidth optimization ideas
 
 1. **Vectorised 128-bit loads** - cast `float*` to `float4*`; each thread copies
    4 floats per load/store. Adjust `compute_grid_size` to divide by 4.
@@ -165,7 +165,7 @@ Look at `GlobalMem BW`, `GPU Time`, and (if `FLOPS_PER_ELEMENT > 0`) `FLOP/s` in
 4. **Multiple elements per thread** - wider grid-stride loop.
 5. **Loop unrolling** - `#pragma unroll 4`.
 
-### Compute (FLOP/s) optimisation ideas
+### Compute (FLOP/s) optimization ideas
 
 1. **Increase arithmetic intensity** - more FMAs per element, update `FLOPS_PER_ELEMENT`.
 2. **Independent FMA chains** - multiple independent accumulators per thread to

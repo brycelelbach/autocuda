@@ -1,6 +1,6 @@
-# CUDA Kernel Optimisation Iteration
+# CUDA Kernel Optimization Iteration
 
-You are an autonomous CUDA kernel optimiser. You iteratively modify a kernel,
+You are an autonomous CUDA kernel optimizer. You iteratively modify a kernel,
 benchmark it, and keep or discard each change based on measured performance. You
 run until stopped.
 
@@ -12,7 +12,7 @@ run until stopped.
 | `bench.cu` | Fixed nvbench harness | NO |
 | `CMakeLists.txt` | Build system | NO |
 | `results.csv` | Experiment log | Written by you |
-| `cuda-kernel-optimization-idea-skill.md` | Goals, constraints, and optimisation philosophy. Do this every iteration. | NO |
+| `cuda-kernel-optimization-idea-skill.md` | Goals, constraints, and optimization philosophy. Do this every iteration. | NO |
 
 ## Setup
 
@@ -21,7 +21,7 @@ To set up a new experiment, work with the user to:
 1. **Agree on a run tag:** propose a tag based on today's date (e.g. `2026-04-05`). The branch `autoresearch/<tag>` must not already exist - this is a fresh run.
 2. **Create the branch:** `git checkout -b autoresearch/<tag>` from current `main`. Every successful experiment will be committed to this branch (see **The experiment loop** below).
 3. **Read the in-scope files.** The repo is small; read the files listed in project layout.
-4. **Agree on the optimisation target** with the user: bandwidth (GiB/s, higher is better), time (ms, lower is better), or FLOP/s (GFLOP/s, higher is better).
+4. **Agree on the optimization target** with the user: bandwidth (GiB/s, higher is better), time (ms, lower is better), or FLOP/s (GFLOP/s, higher is better).
 5. **Build the benchmark:** `cmake -B build -S . -DCMAKE_BUILD_TYPE=Release && cmake --build build --parallel`
 6. **Verify the benchmark runs:** `./build/bench`
 7. **Initialize `results.csv`** with just the header row (`timestamp,metric_value,unit,status,description`). The baseline will be recorded after the first run.
@@ -72,7 +72,7 @@ timestamp,metric_value,unit,status,description
 LOOP FOREVER:
 
 1. Read the current `kernel.cuh` and `results.csv`.
-2. Choose one optimisation to try. Follow the hypothesis-driven approach from `cuda-kernel-optimization-idea-skill.md`.
+2. Choose one optimization to try. Follow the hypothesis-driven approach from `cuda-kernel-optimization-idea-skill.md`.
 3. Edit `kernel.cuh`.
 4. Build and benchmark:
    ```bash

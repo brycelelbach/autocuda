@@ -177,7 +177,7 @@ def parse_metric_json(
     json_path: Path, metric: str, aggregate: str
 ) -> "tuple[float, str] | tuple[None, None]":
     """
-    Extract the selected optimisation metric from nvbench JSON output.
+    Extract the selected optimization metric from nvbench JSON output.
 
     Uses batch (hot) measurements for lower variance.  Bandwidth and flops
     are derived from ``nv/batch/time/gpu/mean`` combined with the declared
@@ -309,7 +309,7 @@ def ask_llm(
         else f"maximise the metric ({unit}, higher is better)"
     )
     user_msg = (
-        f"Optimisation target: --metric {metric} - {goal}\n"
+        f"Optimization target: --metric {metric} - {goal}\n"
         f"Reported values use --aggregate {aggregate} across benchmark states.\n\n"
         f"Current kernel.cuh:\n```cuda\n{kernel}\n```\n\n"
         f"Experiment history (values are in {unit}):\n```\n{history}\n```\n\n"
@@ -361,7 +361,7 @@ def metric_delta_str(metric: str, value: float, best: float) -> tuple[str, float
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="""
-AutoCUDA uses an LLM API to iteratively optimise a CUDA kernel for a target metric
+AutoCUDA uses an LLM API to iteratively optimize a CUDA kernel for a target metric
 (bandwidth, FLOPS, or execution time).  On each iteration it asks the LLM to propose
 an improved version of kernel.cuh, compiles it against the fixed benchmark harness
 bench.cu, measures performance with nvbench, and keeps the change only if the metric
@@ -386,12 +386,12 @@ Usage:
         return float(n)
 
     ap.add_argument("--iterations", "-n", type=iterations_type, default=math.inf,
-                    help="number of optimisation iterations, or 'inf' to run forever (default: inf)")
+                    help="number of optimization iterations, or 'inf' to run forever (default: inf)")
     ap.add_argument(
         "--metric", "-m",
         choices=("bandwidth", "time", "flops"),
         default="bandwidth",
-        help="optimisation target: batch bandwidth (GiB/s), batch time (ms), or flops (GFLOP/s)",
+        help="optimization target: batch bandwidth (GiB/s), batch time (ms), or flops (GFLOP/s)",
     )
     ap.add_argument("--bench-timeout", type=float, default=15.0,
                     help="total wall-time budget for each nvbench run in seconds; "
@@ -432,7 +432,7 @@ Usage:
     print("=" * 60)
     print("AutoCUDA - autonomous CUDA kernel optimizer")
     print("=" * 60)
-    print(f"\nOptimisation target: --metric {args.metric}")
+    print(f"\nOptimization target: --metric {args.metric}")
     print(f"Multi-type aggregate: --aggregate {aggregate}")
     print("\nBuilding initial benchmark...")
     if not build(reconfigure=True):
@@ -452,7 +452,7 @@ Usage:
     best_value  = baseline_value
     best_kernel = KERNEL_FILE.read_text()
 
-    # --- optimisation loop ---
+    # --- optimization loop ---
     limit = args.iterations
     for i in count(1):
         if i > limit:

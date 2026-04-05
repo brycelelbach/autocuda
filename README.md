@@ -24,9 +24,9 @@ The repo is deliberately kept small and only has three files that matter:
   history, asks Claude for one improvement, applies it, benchmarks, and keeps or
   reverts. **This file is not edited by the agent.**
 
-The optimisation target is configurable:
+The optimization target is configurable:
 
-| `--metric` | What is optimised | Unit | Direction |
+| `--metric` | What is optimized | Unit | Direction |
 |------------|-------------------|------|-----------|
 | `bandwidth` (default) | Global memory bandwidth | GiB/s | Higher is better |
 | `time` | Mean GPU time | ms | Lower is better |
@@ -67,7 +67,7 @@ python autocuda.py --metric bandwidth --iterations 30
 python autocuda.py --metric time --iterations 20 --bench-timeout 30
 ```
 
-The agent's optimisation strategy is defined in
+The agent's optimization strategy is defined in
 `cuda-kernel-optimization-idea-skill.md`.
 
 ### Interactive mode (Claude Code / Cursor)
@@ -86,7 +86,7 @@ CMakeLists.txt      - build system (do not modify)
 autocuda.py         - autonomous API-loop driver
 results.csv         - experiment log (written by agent / script)
 
-cuda-kernel-optimization-idea-skill.md       - skill: generate one kernel optimisation
+cuda-kernel-optimization-idea-skill.md       - skill: generate one kernel optimization
 cuda-kernel-optimization-iteration-skill.md  - skill: autonomous experiment loop
 ```
 
@@ -97,6 +97,6 @@ cuda-kernel-optimization-iteration-skill.md  - skill: autonomous experiment loop
 - **Fixed benchmark harness.** `bench.cu` and `CMakeLists.txt` are never
   modified. The benchmark is the ground truth - consistent and reproducible.
 - **Multiple benchmark states.** The harness can sweep across types, sizes, or
-  other axes. This forces the agent to find optimisations that generalise.
+  other axes. This forces the agent to find optimizations that generalise.
 - **Self-contained.** One GPU, one kernel file, one metric. No distributed
   builds, no complex configs.
