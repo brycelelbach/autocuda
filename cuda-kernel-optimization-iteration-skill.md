@@ -19,7 +19,7 @@ run until stopped.
 To set up a new experiment, work with the user to:
 
 1. **Agree on a run tag:** propose a tag based on today's date (e.g. `2026-04-05`). The branch `autoresearch/<tag>` must not already exist - this is a fresh run.
-2. **Create the branch:** `git checkout -b autoresearch/<tag>` from current `main`.
+2. **Create the branch:** `git checkout -b autoresearch/<tag>` from current `main`. Every successful experiment will be committed to this branch (see **The experiment loop** below).
 3. **Read the in-scope files.** The repo is small; read the files listed in project layout.
 4. **Agree on the optimisation target** with the user: bandwidth (GiB/s, higher is better), time (ms, lower is better), or FLOP/s (GFLOP/s, higher is better).
 5. **Build the benchmark:** `cmake -B build -S . -DCMAKE_BUILD_TYPE=Release && cmake --build build --parallel`
@@ -80,10 +80,12 @@ LOOP FOREVER:
    ```
 5. Extract the metric from the benchmark output.
 6. If the benchmark crashed, see **Crashes** below.
-7. If the metric **improved**: keep the change. Record as `improved`.
-8. If the metric **regressed or stayed the same**: revert `kernel.cuh` to the previous best. Record as `regressed`.
+7. If the metric **improved**: keep the change, **commit `kernel.cuh`** (`git add kernel.cuh && git commit -m "iteration N: <description>"`), and record as `improved`.
+8. If the metric **regressed or stayed the same**: revert `kernel.cuh` to the previous best (do **not** commit). Record as `regressed`.
 9. Append a row to `results.csv`.
 10. Go to 1.
+
+The branch's git log should be a clean record of every winning kernel change. Regressions, build errors, and runtime errors are reverted and never committed.
 
 **Timeout**: Each benchmark should take ~15s total. If a run exceeds a minute, kill it and treat it as a failure (revert and log as `runtime_error`).
 

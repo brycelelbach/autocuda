@@ -11,6 +11,9 @@ __pycache__/
 .venv/
 venv/
 
+# Experiment log (kept local, not committed)
+/results.csv
+
 # Cursor / Claude Code local config
 .cursor/
 .claude/

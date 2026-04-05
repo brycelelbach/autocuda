@@ -8,7 +8,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime
+from datetime import date, datetime
 from itertools import count
 from pathlib import Path
 
@@ -34,6 +34,35 @@ NUM_TYPE_VARIANTS = 5
 # ---------------------------------------------------------------------------
 SKILL_FILE = REPO / "cuda-kernel-optimization-idea-skill.md"
 SYSTEM_PROMPT = SKILL_FILE.read_text()
+
+# ---------------------------------------------------------------------------
+# Git helpers
+# ---------------------------------------------------------------------------
+def _git(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        capture_output=True, text=True, cwd=str(REPO), check=check,
+    )
+
+
+def git_create_branch(tag: str) -> None:
+    """Create and check out ``autoresearch/<tag>`` from the current HEAD."""
+    branch = f"autoresearch/{tag}"
+    probe = _git("rev-parse", "--verify", branch, check=False)
+    if probe.returncode == 0:
+        sys.exit(f"Error: branch '{branch}' already exists. "
+                 "Pick a different --tag or delete the branch first.")
+    r = _git("checkout", "-b", branch)
+    if r.returncode != 0:
+        sys.exit(f"Failed to create branch '{branch}':\n{r.stderr}")
+    print(f"Created branch: {branch}")
+
+
+def git_commit_kernel(description: str, iteration: int) -> None:
+    """Stage ``kernel.cuh`` and commit with the iteration description."""
+    _git("add", str(KERNEL_FILE.relative_to(REPO)))
+    _git("commit", "-m", f"iteration {iteration}: {description}", check=False)
+
 
 # ---------------------------------------------------------------------------
 # Build helpers
@@ -371,6 +400,9 @@ Usage:
         "Defaults: min for --metric bandwidth (bottleneck type), "
         "max for --metric time (slowest type).",
     )
+    ap.add_argument("--tag", type=str, default=None,
+                    help="run tag for the git branch autoresearch/<tag> "
+                    "(default: today's date, e.g. 2026-04-05)")
     ap.add_argument("--api-key", type=str, default=None,
                     help="Anthropic API key (overrides ANTHROPIC_API_KEY env var)")
     args = ap.parse_args()
@@ -385,6 +417,10 @@ Usage:
     aggregate = args.aggregate
     if aggregate is None:
         aggregate = "max" if args.metric == "time" else "min"
+
+    # --- git branch ---
+    tag = args.tag or date.today().isoformat()
+    git_create_branch(tag)
 
     # --- initial build ---
     print("=" * 60)
@@ -452,6 +488,7 @@ Usage:
             status      = "improved"
             best_value  = value
             best_kernel = new_kernel
+            git_commit_kernel(description, i)
             sign = "faster" if args.metric == "time" else "higher"
             print(f"\n  IMPROVED  {value:.4f} {unit}  "
                   f"({delta} {unit}, {delta_pct:+.1f}% {sign})")
