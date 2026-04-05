@@ -1,5 +1,5 @@
 /*
- * bench.cu — fixed nvbench harness (multi–element-type via type axis).
+ * bench.cu - fixed nvbench harness (multi-element-type via type axis).
  *
  * One benchmark, `kernel_bench`, sweeps T over int8, fp16, fp32, fp64, and
  * complex fp64. Only kernel.cuh is meant to be modified for kernel logic.
@@ -14,10 +14,8 @@
 
 #include "kernel.cuh"
 
-// 256 MiB total traffic per type — element count scales with sizeof(T).
+// 256 MiB total traffic per type - element count scales with sizeof(T).
 static constexpr std::size_t DATA_BYTES = 256ULL * 1024 * 1024;
-
-static constexpr double TIME_BUDGET_SECONDS = 15.0;
 
 template<typename T>
 struct bench_fill;
@@ -66,9 +64,7 @@ void run_kernel_bench(nvbench::state& state, T init_src, T init_dst)
 
     state.add_element_count(num_elements, "NumElements");
     state.add_global_memory_reads<T>(num_elements, "DataSize");
-    state.add_global_memory_writes<T>(num_elements);
-
-    state.set_timeout(TIME_BUDGET_SECONDS);
+    state.add_global_memory_writes<T>(num_elements, "DataSize");
 
     const T* src_ptr = thrust::raw_pointer_cast(src.data());
     T*       dst_ptr = thrust::raw_pointer_cast(dst.data());

@@ -5,14 +5,14 @@
 #include <cuComplex.h>
 
 // =============================================================================
-// TUNABLE PARAMETERS — the only section you should modify
+// TUNABLE PARAMETERS - the only section you should modify
 // =============================================================================
 
 // Thread-block width (must be a multiple of 32).
 static constexpr int BLOCK_SIZE = 256;
 
 // =============================================================================
-// Kernel — copies num_elements values of type T from src to dst.
+// Kernel - copies num_elements values of type T from src to dst.
 //
 // bench.cu registers one nvbench benchmark with a type axis over T; it launches:
 //   kernel<T><<<compute_grid_size(num_elements), BLOCK_SIZE, 0, stream>>>
@@ -20,7 +20,7 @@ static constexpr int BLOCK_SIZE = 256;
 // where num_elements = 256 MiB / sizeof(T).
 //
 // Required explicit instantiations (below): int8_t, __half, float, double,
-// cuDoubleComplex — add more if you extend bench.cu.
+// cuDoubleComplex - add more if you extend bench.cu.
 // =============================================================================
 template<typename T>
 __global__ void kernel(const T* __restrict__ src,

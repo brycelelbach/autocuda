@@ -1,6 +1,6 @@
 # AutoCUDA: CUDA Kernel Optimizer
 
-Autonomous CUDA kernel optimizer — analogous to
+Autonomous CUDA kernel optimizer - analogous to
 [karpathy/autoresearch](https://github.com/karpathy/autoresearch) but targeting
 GPU kernel performance instead of language model optimization.
 
@@ -8,16 +8,16 @@ GPU kernel performance instead of language model optimization.
 
 | File | Purpose | Editable? |
 |------|---------|-----------|
-| `kernel.cuh` | Kernel + launch config + metric declaration | **YES — only this** |
+| `kernel.cuh` | Kernel + launch config + metric declaration | **YES - only this** |
 | `bench.cu` | Fixed nvbench harness | NO |
 | `CMakeLists.txt` | Build system | NO |
 | `autocuda.py` | Autonomous Claude API loop | NO |
 | `program.md` | This file | Reference |
-| `results.tsv` | Experiment log | Written by agent |
+| `results.csv` | Experiment log | Written by agent |
 
 ## Metrics
 
-`FLOPS_PER_ELEMENT` does **not** choose what you optimise — it only declares how
+`FLOPS_PER_ELEMENT` does **not** choose what you optimise - it only declares how
 many floating-point operations you count **per float** so `bench.cu` can report
 FLOP/s (`N × NUM_FLOATS / mean GPU time`) when `N > 0`. A kernel can be
 memory-bound and still have `FLOPS_PER_ELEMENT > 0`.
@@ -115,11 +115,11 @@ python autocuda.py --metric bandwidth --iterations 30
 ```
 
 Each iteration:
-1. Reads the current `kernel.cuh` and `results.tsv`.
+1. Reads the current `kernel.cuh` and `results.csv`.
 2. Sends both to Claude and asks for one improvement.
 3. Applies the suggestion, rebuilds, and benchmarks.
 4. Keeps the change if the primary metric improved; reverts otherwise.
-5. Logs the result to `results.tsv`.
+5. Logs the result to `results.csv`.
 
 ---
 
@@ -144,40 +144,40 @@ Look at `GlobalMem BW`, `GPU Time`, and (if `FLOPS_PER_ELEMENT > 0`) `FLOP/s` in
 
 ### Workflow
 
-1. Read the current `kernel.cuh` and the `results.tsv` log.
+1. Read the current `kernel.cuh` and the `results.csv` log.
 2. Choose one optimisation to try (see ideas below).
 3. Edit `kernel.cuh`.
 4. Run `cmake --build build --parallel && ./build/bench`.
 5. If the chosen metric improved (higher BW/FLOP/s, or lower GPU time): keep the change, log it as `improved`.
 6. If it regressed: revert `kernel.cuh`, log as `regressed`.
-7. Append a row to `results.tsv`:
+7. Append a row to `results.csv`:
    ```
-   <ISO timestamp>\t<metric_value>\t<unit>\t<status>\t<description>
+   <ISO timestamp>,<metric_value>,<unit>,<status>,<description>
    ```
 8. Repeat.
 
 ### Bandwidth optimisation ideas
 
-1. **Vectorised 128-bit loads** — cast `float*` to `float4*`; each thread copies
+1. **Vectorised 128-bit loads** - cast `float*` to `float4*`; each thread copies
    4 floats per load/store. Adjust `compute_grid_size` to divide by 4.
-2. **`__ldg()` cache hint** — `__ldg(&src[i])` routes through the read-only cache.
-3. **BLOCK_SIZE tuning** — try 64, 128, 256, 512.
-4. **Multiple elements per thread** — wider grid-stride loop.
-5. **Loop unrolling** — `#pragma unroll 4`.
+2. **`__ldg()` cache hint** - `__ldg(&src[i])` routes through the read-only cache.
+3. **BLOCK_SIZE tuning** - try 64, 128, 256, 512.
+4. **Multiple elements per thread** - wider grid-stride loop.
+5. **Loop unrolling** - `#pragma unroll 4`.
 
 ### Compute (FLOP/s) optimisation ideas
 
-1. **Increase arithmetic intensity** — more FMAs per element, update `FLOPS_PER_ELEMENT`.
-2. **Independent FMA chains** — multiple independent accumulators per thread to
+1. **Increase arithmetic intensity** - more FMAs per element, update `FLOPS_PER_ELEMENT`.
+2. **Independent FMA chains** - multiple independent accumulators per thread to
    hide FP latency and saturate execution units.
-3. **Half-precision** — `__half` or `__half2` can double throughput on modern GPUs.
-4. **Warp-level reductions** — `__shfl_xor_sync` for efficient cross-lane ops.
+3. **Half-precision** - `__half` or `__half2` can double throughput on modern GPUs.
+4. **Warp-level reductions** - `__shfl_xor_sync` for efficient cross-lane ops.
 
 ---
 
 ## Results file format
 
-`results.tsv` columns:
+`results.csv` columns:
 
 | column | example |
 |--------|---------|
