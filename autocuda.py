@@ -47,8 +47,8 @@ def _git(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
 
 
 def git_create_branch(tag: str) -> None:
-    """Create and check out ``autoresearch/<tag>`` from the current HEAD."""
-    branch = f"autoresearch/{tag}"
+    """Create and check out ``autocuda/<tag>`` from the current HEAD."""
+    branch = f"autocuda/{tag}"
     probe = _git("rev-parse", "--verify", branch, check=False)
     if probe.returncode == 0:
         sys.exit(f"Error: branch '{branch}' already exists. "
@@ -406,7 +406,7 @@ Usage:
     )
     default_tag = date.today().isoformat()
     ap.add_argument("--tag", type=str, default=default_tag,
-                    help="run tag for the git branch autoresearch/<tag> "
+                    help="run tag for the git branch autocuda/<tag> "
                     f"(default: {default_tag})")
     ap.add_argument("--model", type=str, default=DEFAULT_MODEL,
                     help=f"model identifier (default: {DEFAULT_MODEL})")
