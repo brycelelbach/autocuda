@@ -46,17 +46,34 @@ def _git(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     )
 
 
-def git_create_branch(tag: str) -> None:
-    """Create and check out ``autocuda/<tag>`` from the current HEAD."""
+def git_setup_branch(tag: str, continue_existing: bool) -> None:
+    """Create or check out ``autocuda/<tag>``.
+
+    When *continue_existing* is ``True`` and the branch already exists, it is
+    checked out so the run can resume.  When ``False``, an existing branch is
+    treated as an error.
+    """
     branch = f"autocuda/{tag}"
     probe = _git("rev-parse", "--verify", branch, check=False)
-    if probe.returncode == 0:
+    exists = probe.returncode == 0
+
+    if exists and not continue_existing:
         sys.exit(f"Error: branch '{branch}' already exists. "
-                 "Pick a different --tag or delete the branch first.")
-    r = _git("checkout", "-b", branch)
-    if r.returncode != 0:
-        sys.exit(f"Failed to create branch '{branch}':\n{r.stderr}")
-    print(f"Created branch: {branch}")
+                 "Pick a different --tag, pass --continue, or delete the branch first.")
+
+    if exists:
+        r = _git("checkout", branch)
+        if r.returncode != 0:
+            sys.exit(f"Failed to check out branch '{branch}':\n{r.stderr}")
+        print(f"Continuing on branch: {branch}")
+    else:
+        if continue_existing:
+            sys.exit(f"Error: branch '{branch}' does not exist. "
+                     "Remove --continue to start a new run.")
+        r = _git("checkout", "-b", branch)
+        if r.returncode != 0:
+            sys.exit(f"Failed to create branch '{branch}':\n{r.stderr}")
+        print(f"Created branch: {branch}")
 
 
 def git_commit_kernel(description: str, iteration: int) -> None:
@@ -316,6 +333,16 @@ def log_result(value: "float | None", unit: str, status: str, description: str) 
 def read_results() -> str:
     return RESULTS_FILE.read_text() if RESULTS_FILE.exists() else "(none)"
 
+
+def count_existing_iterations() -> int:
+    """Count non-baseline rows in results.csv to determine the iteration offset."""
+    if not RESULTS_FILE.exists():
+        return 0
+    with open(RESULTS_FILE) as f:
+        reader = csv.reader(f)
+        next(reader, None)  # skip header
+        return sum(1 for row in reader if len(row) >= 4 and row[3] != "baseline")
+
 # ---------------------------------------------------------------------------
 # LLM interaction
 # ---------------------------------------------------------------------------
@@ -573,7 +600,7 @@ are reduced to a single scalar via --aggregate (min, mean, or max).
 Usage:
     export NVIDIA_API_KEY_AUTOCUDA=...
     python autocuda.py [--metric memory-bandwidth|compute-bandwidth|time] [--iterations N|inf]
-                       [--bench-timeout SEC] [--aggregate min|mean|max]
+                       [--bench-timeout SEC] [--aggregate min|mean|max] [--continue]
 """
     )
     def iterations_type(v: str) -> float:
@@ -606,6 +633,9 @@ Usage:
     ap.add_argument("--tag", type=str, default=default_tag,
                     help="run tag for the git branch autocuda/<tag> "
                     f"(default: {default_tag})")
+    ap.add_argument("--continue", dest="continue_run", action="store_true",
+                    default=False,
+                    help="resume on an existing autocuda/<tag> branch instead of creating a new one")
     ap.add_argument("--direction", "-d", type=str, default=None,
                     help="optional guidance message injected into the LLM prompt to steer experimentation")
     ap.add_argument("--model", type=str, default=DEFAULT_MODEL,
@@ -625,7 +655,8 @@ Usage:
 
     # --- git branch ---
     tag = args.tag
-    git_create_branch(tag)
+    git_setup_branch(tag, args.continue_run)
+    iter_offset = count_existing_iterations() if args.continue_run else 0
 
     # --- initial build ---
     print("=" * 60)
@@ -633,6 +664,8 @@ Usage:
     print("=" * 60)
     print(f"\nOptimization target: --metric {args.metric}")
     print(f"Multi-type aggregate: --aggregate {aggregate}")
+    if args.continue_run:
+        print(f"Resuming from iteration {iter_offset}")
     if args.direction:
         print(f"Direction: {args.direction}")
     print("\nBuilding initial benchmark...")
@@ -649,10 +682,12 @@ Usage:
     if baseline_value is None:
         sys.exit("Baseline benchmark failed.\n")
 
-    print(f"\nBaseline: {baseline_value:.4f} {unit}")
+    baseline_label = "continued" if args.continue_run else "baseline"
+    print(f"\n{baseline_label.capitalize()}: {baseline_value:.4f} {unit}")
     for vname, vval in baseline_per_variant:
         print(f"  {vname}: {vval:.4f} {unit}")
-    log_result(baseline_value, unit, "baseline", "initial kernel")
+    log_result(baseline_value, unit, "baseline",
+               "continued from previous run" if args.continue_run else "initial kernel")
 
     best_value       = baseline_value
     best_per_variant = baseline_per_variant
@@ -664,8 +699,8 @@ Usage:
     failure_reason = ""
     failure_output = ""
 
-    for i in count(1):
-        if i > limit:
+    for i in count(iter_offset + 1):
+        if i - iter_offset > limit:
             break
         sep = "=" * 60
         print(f"\n{sep}")
