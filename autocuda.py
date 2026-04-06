@@ -329,6 +329,7 @@ def ask_llm(
     failed_kernel: "str | None" = None,
     failure_reason: str = "",
     failure_output: str = "",
+    direction: "str | None" = None,
 ) -> str:
     kernel  = KERNEL_FILE.read_text()
     history = read_results()
@@ -349,9 +350,19 @@ def ask_llm(
             "kernel.cuh has been reverted to the last known good version shown below.\n\n"
         )
 
+    direction_block = ""
+    if direction:
+        direction_block = (
+            f"\n## User direction\n\n"
+            f"The user has provided the following guidance for this optimization run. "
+            f"Prioritize this direction when choosing what to try next:\n\n"
+            f"{direction}\n\n"
+        )
+
     parts.append(
         f"Optimization target: --metric {metric} - {goal}\n"
         f"Reported values use --aggregate {aggregate} across benchmark states.\n\n"
+        f"{direction_block}"
         f"Current kernel.cuh:\n```cuda\n{kernel}\n```\n\n"
         f"Experiment history (values are in {unit}):\n```\n{history}\n```\n\n"
         f"This is iteration {iteration}. Propose the next improvement."
@@ -595,6 +606,8 @@ Usage:
     ap.add_argument("--tag", type=str, default=default_tag,
                     help="run tag for the git branch autocuda/<tag> "
                     f"(default: {default_tag})")
+    ap.add_argument("--direction", "-d", type=str, default=None,
+                    help="optional guidance message injected into the LLM prompt to steer experimentation")
     ap.add_argument("--model", type=str, default=DEFAULT_MODEL,
                     help=f"model identifier (default: {DEFAULT_MODEL})")
     ap.add_argument("--api-key", type=str, default=None,
@@ -620,6 +633,8 @@ Usage:
     print("=" * 60)
     print(f"\nOptimization target: --metric {args.metric}")
     print(f"Multi-type aggregate: --aggregate {aggregate}")
+    if args.direction:
+        print(f"Direction: {args.direction}")
     print("\nBuilding initial benchmark...")
     if not build(reconfigure=True):
         sys.exit("Initial build failed. Check CMakeLists.txt / bench.cu.")
@@ -663,6 +678,7 @@ Usage:
             failed_kernel=failed_kernel,
             failure_reason=failure_reason,
             failure_output=failure_output,
+            direction=args.direction,
         )
         failed_kernel = None
         failure_reason = ""
