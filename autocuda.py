@@ -377,23 +377,20 @@ def ask_llm(
             "kernel.cuh has been reverted to the last known good version shown below.\n\n"
         )
 
-    direction_block = ""
-    if direction:
-        direction_block = (
-            f"\n## User direction\n\n"
-            f"The user has provided the following guidance for this optimization run. "
-            f"Prioritize this direction when choosing what to try next:\n\n"
-            f"{direction}\n\n"
-        )
-
     parts.append(
         f"Optimization target: --metric {metric} - {goal}\n"
         f"Reported values use --aggregate {aggregate} across benchmark states.\n\n"
-        f"{direction_block}"
         f"Current kernel.cuh:\n```cuda\n{kernel}\n```\n\n"
         f"Experiment history (values are in {unit}):\n```\n{history}\n```\n\n"
-        f"This is iteration {iteration}. Propose the next improvement."
     )
+
+    if direction:
+        parts.append(
+            f"IMPORTANT DIRECTION FROM THE USER — you MUST follow this guidance:\n\n"
+            f"{direction}\n\n"
+        )
+
+    parts.append(f"This is iteration {iteration}. Propose the next improvement.")
 
     user_msg = "".join(parts)
     resp = client.chat.completions.create(
