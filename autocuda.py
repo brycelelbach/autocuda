@@ -8,7 +8,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import date, datetime
+from datetime import datetime
 from itertools import count
 from pathlib import Path
 
@@ -18,7 +18,7 @@ from openai import OpenAI
 # Paths
 # ---------------------------------------------------------------------------
 REPO         = Path(__file__).parent.resolve()
-RESULTS_FILE = REPO / "results.csv"
+EXPERIMENTS  = REPO / "experiments"
 BUILD_DIR    = REPO / "build"
 JSON_OUT     = BUILD_DIR / "_bench_result.json"
 
@@ -50,9 +50,9 @@ def configure_kernel(name: str) -> None:
     NUM_TYPE_VARIANTS = cfg["num_variants"]
 
 # ---------------------------------------------------------------------------
-# System prompt - loaded from the idea skill file next to this script.
+# System prompt - loaded from the trial skill SKILL.md next to this script.
 # ---------------------------------------------------------------------------
-SKILL_FILE = REPO / "cuda-kernel-optimization-idea-skill.md"
+SKILL_FILE = REPO / "cuda-kernel-optimization-trial.md"
 SYSTEM_PROMPT = SKILL_FILE.read_text()
 
 # ---------------------------------------------------------------------------
@@ -66,13 +66,13 @@ def _git(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
 
 
 def git_setup_branch(tag: str, continue_existing: bool) -> None:
-    """Create or check out ``autocuda/<tag>``.
+    """Create or check out ``experiments/<tag>``.
 
     When *continue_existing* is ``True`` and the branch already exists, it is
     checked out so the run can resume.  When ``False``, an existing branch is
     treated as an error.
     """
-    branch = f"autocuda/{tag}"
+    branch = f"experiments/{tag}"
     probe = _git("rev-parse", "--verify", branch, check=False)
     exists = probe.returncode == 0
 
@@ -95,10 +95,10 @@ def git_setup_branch(tag: str, continue_existing: bool) -> None:
         print(f"Created branch: {branch}")
 
 
-def git_commit_kernel(description: str, iteration: int) -> None:
-    """Stage ``kernel.cuh`` and commit with the iteration description."""
+def git_commit_kernel(description: str, trial: int) -> None:
+    """Stage ``kernel.cuh`` and commit with the trial description."""
     _git("add", str(KERNEL_FILE.relative_to(REPO)))
-    _git("commit", "-m", f"AutoCUDA Iteration {iteration}: {description}", check=False)
+    _git("commit", "-m", f"AutoCUDA Trial {trial}: {description}", check=False)
 
 
 # ---------------------------------------------------------------------------
@@ -335,30 +335,35 @@ def parse_metric_stdout(
 # ---------------------------------------------------------------------------
 # Results log
 # ---------------------------------------------------------------------------
-def init_results() -> None:
-    if not RESULTS_FILE.exists():
-        with open(RESULTS_FILE, "w", newline="") as f:
+def results_file_for_tag(tag: str) -> Path:
+    return EXPERIMENTS / f"{tag}-log.csv"
+
+
+def init_results(results_file: Path) -> None:
+    results_file.parent.mkdir(parents=True, exist_ok=True)
+    if not results_file.exists():
+        with open(results_file, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(["timestamp", "metric_value", "unit", "status", "description"])
 
 
-def log_result(value: "float | None", unit: str, status: str, description: str) -> None:
+def log_result(results_file: Path, value: "float | None", unit: str, status: str, description: str) -> None:
     ts      = datetime.now().isoformat(timespec="seconds")
     val_str = f"{value:.4f}" if value is not None else "N/A"
-    with open(RESULTS_FILE, "a", newline="") as f:
+    with open(results_file, "a", newline="") as f:
         writer = csv.writer(f)
         writer.writerow([ts, val_str, unit, status, description])
 
 
-def read_results() -> str:
-    return RESULTS_FILE.read_text() if RESULTS_FILE.exists() else "(none)"
+def read_results(results_file: Path) -> str:
+    return results_file.read_text() if results_file.exists() else "(none)"
 
 
-def count_existing_iterations() -> int:
-    """Count non-baseline rows in results.csv to determine the iteration offset."""
-    if not RESULTS_FILE.exists():
+def count_existing_trials(results_file: Path) -> int:
+    """Count non-baseline rows in the log CSV to determine the trial offset."""
+    if not results_file.exists():
         return 0
-    with open(RESULTS_FILE) as f:
+    with open(results_file) as f:
         reader = csv.reader(f)
         next(reader, None)  # skip header
         return sum(1 for row in reader if len(row) >= 4 and row[3] != "baseline")
@@ -369,17 +374,18 @@ def count_existing_iterations() -> int:
 def ask_llm(
     client: OpenAI,
     model: str,
-    iteration: int,
+    trial: int,
     metric: str,
     unit: str,
     aggregate: str,
+    results_file: Path,
     failed_kernel: "str | None" = None,
     failure_reason: str = "",
     failure_output: str = "",
     direction: "str | None" = None,
 ) -> str:
     kernel  = KERNEL_FILE.read_text()
-    history = read_results()
+    history = read_results(results_file)
     goal = (
         "minimise execution time (lower is better)"
         if metric == "time"
@@ -390,7 +396,7 @@ def ask_llm(
 
     if failed_kernel is not None:
         parts.append(
-            f"WARNING: Your previous iteration FAILED ({failure_reason}).\n\n"
+            f"WARNING: Your previous trial FAILED ({failure_reason}).\n\n"
             f"Error output:\n```\n{failure_output[-3000:]}\n```\n\n"
             f"The failed kernel you proposed:\n```cuda\n{failed_kernel}\n```\n\n"
             "You MUST fix the issues in your next proposal. "
@@ -401,7 +407,7 @@ def ask_llm(
         f"Optimization target: --metric {metric} - {goal}\n"
         f"Reported values use --aggregate {aggregate} across benchmark states.\n\n"
         f"Current kernel.cuh:\n```cuda\n{kernel}\n```\n\n"
-        f"Experiment history (values are in {unit}):\n```\n{history}\n```\n\n"
+        f"Trial history (values are in {unit}):\n```\n{history}\n```\n\n"
     )
 
     if direction:
@@ -410,7 +416,7 @@ def ask_llm(
             f"{direction}\n\n"
         )
 
-    parts.append(f"This is iteration {iteration}. Propose the next improvement.")
+    parts.append(f"This is trial {trial}. Propose the next improvement.")
 
     user_msg = "".join(parts)
     resp = client.chat.completions.create(
@@ -604,11 +610,11 @@ def main() -> None:
     ap = argparse.ArgumentParser(
         description="""
 AutoCUDA uses an LLM API to iteratively optimize a CUDA kernel for a target metric
-(memory-bandwidth, compute-bandwidth, or time).  On each iteration it asks the LLM to propose
+(memory-bandwidth, compute-bandwidth, or time).  On each trial it asks the LLM to propose
 an improved version of kernel.cuh, compiles it against the fixed benchmark harness
 bench.cu, measures performance with nvbench, and then asks the LLM whether to keep or
 reject the change based on the full per-variant performance breakdown and code
-complexity.  Experiment history is logged to a CSV file so the LLM can learn from
+complexity.  Trial history is logged to a CSV file so the LLM can learn from
 earlier attempts.
 
 The benchmark is parameterised over several variants; per-variant results
@@ -616,20 +622,20 @@ are reduced to a single scalar via --aggregate (min, mean, or max).
 
 Usage:
     export NVIDIA_API_KEY_AUTOCUDA=...
-    python autocuda.py [--metric memory-bandwidth|compute-bandwidth|time] [--iterations N|inf]
+    python autocuda.py [--metric memory-bandwidth|compute-bandwidth|time] [--trials N|inf]
                        [--bench-timeout SEC] [--aggregate min|mean|max] [--continue]
 """
     )
-    def iterations_type(v: str) -> float:
+    def trials_type(v: str) -> float:
         if v.lower() == "inf":
             return math.inf
         n = int(v)
         if n < 0:
-            raise argparse.ArgumentTypeError("iterations must be non-negative")
+            raise argparse.ArgumentTypeError("trials must be non-negative")
         return float(n)
 
-    ap.add_argument("--iterations", "-n", type=iterations_type, default=math.inf,
-                    help="number of optimization iterations, or 'inf' to run forever (default: inf)")
+    ap.add_argument("--trials", "-n", type=trials_type, default=math.inf,
+                    help="number of optimization trials, or 'inf' to run forever (default: inf)")
     ap.add_argument(
         "--metric", "-m",
         choices=("memory-bandwidth", "compute-bandwidth", "time"),
@@ -646,15 +652,15 @@ Usage:
         help="how metrics from different benchmark variants should be combined: min, mean, or max "
         "(default: mean).",
     )
-    default_tag = date.today().isoformat()
+    default_tag = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     ap.add_argument("--tag", type=str, default=default_tag,
-                    help="run tag for the git branch autocuda/<tag> "
+                    help="run tag for the git branch experiments/<tag> "
                     f"(default: {default_tag})")
     ap.add_argument("--continue", dest="continue_run", action="store_true",
                     default=False,
-                    help="resume on an existing autocuda/<tag> branch instead of creating a new one")
+                    help="resume on an existing experiments/<tag> branch instead of creating a new one")
     ap.add_argument("--direction", "-d", type=str, default=None,
-                    help="optional guidance message injected into the LLM prompt to steer experimentation")
+                    help="optional guidance message injected into the LLM prompt to steer trials")
     ap.add_argument("--model", type=str, default=DEFAULT_MODEL,
                     help=f"model identifier (default: {DEFAULT_MODEL})")
     ap.add_argument("--api-key", type=str, default=None,
@@ -675,14 +681,15 @@ Usage:
         sys.exit("Error: set NVIDIA_API_KEY_AUTOCUDA or pass --api-key")
 
     client = OpenAI(base_url=BASE_URL, api_key=api_key)
-    init_results()
 
     aggregate = args.aggregate
 
     # --- git branch ---
     tag = args.tag
+    results_file = results_file_for_tag(tag)
+    init_results(results_file)
     git_setup_branch(tag, args.continue_run)
-    iter_offset = count_existing_iterations() if args.continue_run else 0
+    trial_offset = count_existing_trials(results_file) if args.continue_run else 0
 
     # --- initial build ---
     print("=" * 60)
@@ -691,7 +698,7 @@ Usage:
     print(f"\nOptimization target: --metric {args.metric}")
     print(f"Multi-type aggregate: --aggregate {aggregate}")
     if args.continue_run:
-        print(f"Resuming from iteration {iter_offset}")
+        print(f"Resuming from trial {trial_offset}")
     if args.direction:
         print(f"Direction: {args.direction}")
     print("\nBuilding initial benchmark...")
@@ -712,30 +719,31 @@ Usage:
     print(f"\n{baseline_label.capitalize()}: {baseline_value:.4f} {unit}")
     for vname, vval in baseline_per_variant:
         print(f"  {vname}: {vval:.4f} {unit}")
-    log_result(baseline_value, unit, "baseline",
+    log_result(results_file, baseline_value, unit, "baseline",
                "continued from previous run" if args.continue_run else "initial kernel")
 
     best_value       = baseline_value
     best_per_variant = baseline_per_variant
     best_kernel      = KERNEL_FILE.read_text()
 
-    # --- optimization loop ---
-    limit = args.iterations
+    # --- trial loop ---
+    limit = args.trials
     failed_kernel: str | None = None
     failure_reason = ""
     failure_output = ""
 
-    for i in count(iter_offset + 1):
-        if i - iter_offset > limit:
+    for i in count(trial_offset + 1):
+        if i - trial_offset > limit:
             break
         sep = "=" * 60
         print(f"\n{sep}")
-        tag = f"{i}" if math.isinf(limit) else f"{i}/{int(limit)}"
-        print(f"Iteration {tag} best so far: {best_value:.4f} {unit}")
+        progress = f"{i}" if math.isinf(limit) else f"{i}/{int(limit)}"
+        print(f"Trial {progress} best so far: {best_value:.4f} {unit}")
         print(sep)
 
         response = ask_llm(
             client, args.model, i, args.metric, unit, aggregate,
+            results_file=results_file,
             failed_kernel=failed_kernel,
             failure_reason=failure_reason,
             failure_output=failure_output,
@@ -750,7 +758,7 @@ Usage:
 
         if new_kernel is None:
             print("No <kernel> block found in LLM response - skipping.")
-            log_result(None, unit, "parse_error", "no <kernel> block in response")
+            log_result(results_file, None, unit, "parse_error", "no <kernel> block in response")
             continue
 
         print(f"\nTrying: {description}\n")
@@ -758,7 +766,7 @@ Usage:
 
         build_ok, build_err = cmake_build()
         if not build_ok:
-            log_result(None, unit, "build_error", description)
+            log_result(results_file, None, unit, "build_error", description)
             failed_kernel = new_kernel
             failure_reason = "build_error"
             failure_output = build_err
@@ -770,7 +778,7 @@ Usage:
             args.bench_timeout, args.metric, aggregate
         )
         if value is None:
-            log_result(None, unit, "runtime_error", description)
+            log_result(results_file, None, unit, "runtime_error", description)
             failed_kernel = new_kernel
             failure_reason = "runtime_error"
             failure_output = bench_err
@@ -804,12 +812,12 @@ Usage:
             print(f"  {value:.4f} {unit}  "
                   f"({delta} {unit}, {delta_pct:+.1f}%) - reverted")
 
-        log_result(value, unit, status, description)
+        log_result(results_file, value, unit, status, description)
 
     # --- summary ---
     print(f"\n{'='*60}")
     print(f"Done.  Best: {best_value:.4f} {unit}")
-    print(f"Full results: {RESULTS_FILE}")
+    print(f"Full results: {results_file}")
     print("=" * 60)
 
 

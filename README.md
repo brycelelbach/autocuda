@@ -7,7 +7,7 @@ GPU kernel performance instead of language-model training.
 The idea: give an AI agent a simple CUDA kernel and a fixed benchmark harness,
 then let it experiment autonomously. It modifies the kernel, benchmarks it,
 checks if the result improved, keeps or discards, and repeats. You come back to
-a log of experiments and (hopefully) a faster kernel.
+a log of trials and (hopefully) a faster kernel.
 
 ## How it works
 
@@ -33,7 +33,7 @@ Each kernel directory has two files:
 
 The outer loop is driven by:
 
-- **`autocuda.py`** - reads the current kernel and experiment
+- **`autocuda.py`** - reads the current kernel and trial
   history, asks Claude for one improvement, applies it, benchmarks, and keeps or
   reverts. **This file is not edited by the agent.** Use `--kernel <name>` to
   select which kernel to optimize.
@@ -65,34 +65,32 @@ cmake --build build --parallel
 
 # 3. Run the autonomous optimizer on a specific kernel
 export ANTHROPIC_API_KEY=sk-ant-...
-python autocuda.py --kernel memcpy --metric memory-bandwidth --iterations 30
-python autocuda.py --kernel matmul --metric compute-bandwidth --iterations 30
+python autocuda.py --kernel memcpy --metric memory-bandwidth --trials 30
+python autocuda.py --kernel matmul --metric compute-bandwidth --trials 30
 ```
 
 ## Running the agent
 
 ### Autonomous mode (API loop)
 
-`autocuda.py` drives the full experiment loop programmatically. Each iteration
-it asks Claude for one kernel change, applies it, benchmarks, and keeps or
-reverts.
+`autocuda.py` drives the full experiment programmatically. Each trial it asks
+Claude for one kernel change, applies it, benchmarks, and keeps or reverts.
 
 ```bash
-python autocuda.py --kernel memcpy  --metric memory-bandwidth --iterations 30
-python autocuda.py --kernel matmul  --metric compute-bandwidth --iterations 20
-python autocuda.py --kernel sigmoid --metric memory-bandwidth --iterations 20
-python autocuda.py --kernel stencil --metric memory-bandwidth --iterations 20
+python autocuda.py --kernel memcpy  --metric memory-bandwidth --trials 30
+python autocuda.py --kernel matmul  --metric compute-bandwidth --trials 20
+python autocuda.py --kernel sigmoid --metric memory-bandwidth --trials 20
+python autocuda.py --kernel stencil --metric memory-bandwidth --trials 20
 ```
 
 The agent's optimization strategy is defined in
-`cuda-kernel-optimization-idea-skill.md`.
+`cuda-kernel-optimization-trial.md`.
 
 ### Interactive mode (Claude Code / Cursor)
 
 Open this directory in your agent-enabled editor and point it at
-`cuda-kernel-optimization-iteration-skill.md`. The skill instructs the agent to
-run the experiment loop autonomously - you can leave it running and come back to
-results.
+`cuda-kernel-optimization-experiment.md`. The skill instructs the agent to
+run trials autonomously - you can leave it running and come back to results.
 
 ## Project structure
 
@@ -112,10 +110,10 @@ kernels/
     kernel.cuh
 CMakeLists.txt       - build system (do not modify)
 autocuda.py          - autonomous API-loop driver (--kernel selects workload)
-results.csv          - experiment log (written by agent / script)
+results.csv          - trial log (written by agent / script)
 
-cuda-kernel-optimization-idea-skill.md       - skill: generate one kernel optimization
-cuda-kernel-optimization-iteration-skill.md  - skill: autonomous experiment loop
+cuda-kernel-optimization-trial.md       - skill: generate one kernel optimization trial
+cuda-kernel-optimization-experiment.md  - skill: autonomous experiment (runs trials in a loop)
 ```
 
 ## Design choices
