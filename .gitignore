@@ -11,7 +11,8 @@ __pycache__/
 .venv/
 venv/
 
-# Trial log (kept local, not committed)
+# Trial logs (kept local, not committed)
+/experiments/
 /results.csv
 
 # Cursor / Claude Code local config
