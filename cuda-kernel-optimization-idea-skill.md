@@ -10,9 +10,9 @@ You receive:
 2. The full experiment history (timestamp | value | unit | status | description).
 3. The optimization target (`--metric`), aggregation method (`--aggregate`), and units.
 
-The benchmark harness (`bench.cu`) and build system are fixed. The repo is small - read `bench.cu` and `kernel.cuh` for full context on the benchmark structure, data sizes, and the interface contract.
+The repo contains multiple kernel targets under `kernels/`, but you are optimizing exactly one at a time. Each has a fixed benchmark harness (`bench.cu`) and an editable kernel (`kernel.cuh`). Read both files for your target kernel to understand the benchmark structure, data sizes, type axes, and the interface contract between `bench.cu` and `kernel.cuh`.
 
-The harness benchmarks the kernel across multiple element types (int8, fp16, fp32, fp64, complex fp64) using nvbench. When it produces multiple measurements (one per element type), they are combined with `--aggregate` (default: `min` for memory-bandwidth, `max` for time).
+The harness benchmarks the kernel across multiple nvbench states (typically one per element type). When it produces multiple measurements, they are combined with `--aggregate` (default: `min` for memory-bandwidth, `max` for time).
 
 ## What you CAN do
 
@@ -23,7 +23,7 @@ The harness benchmarks the kernel across multiple element types (int8, fp16, fp3
 
 - Modify `bench.cu`. It is read-only. It contains the fixed benchmark harness, data sizes, and type axis.
 - Add external dependencies not already available in the build environment.
-- Change the interface contract between `kernel.cuh` and `bench.cu`. The harness depends on specific declarations and signatures (`kernel<T>`, `BLOCK_SIZE`, `compute_grid_size`). Satisfy them, or the benchmark will not compile.
+- Change the interface contract between `kernel.cuh` and `bench.cu`. Read `bench.cu` to see which declarations and signatures it depends on. Satisfy them, or the benchmark will not compile.
 
 ## Goals
 
@@ -44,7 +44,7 @@ The harness benchmarks the kernel across multiple element types (int8, fp16, fp3
 When you need hard data on what limits performance, use NVIDIA Nsight Compute (NCU) to profile the kernel. NCU adds massive overhead per kernel launch, so narrow the run to a single configuration. Read `bench.cu` to determine the benchmark name and any axes, then use nvbench CLI flags (`--benchmark`, `-a`) to select one variant:
 
 ```bash
-ncu --set full ./build/bench --benchmark <bench_name> -a <axis>=<value>
+ncu --set full ./build/bench_<kernel> --benchmark <bench_name> -a <axis>=<value>
 ```
 
 If the benchmark has no axes, just filter by benchmark name. Add `-o profile` to save a `profile.ncu-rep` file for the Nsight Compute UI, or omit it to dump metrics directly to the terminal.

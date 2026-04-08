@@ -18,17 +18,36 @@ from openai import OpenAI
 # Paths
 # ---------------------------------------------------------------------------
 REPO         = Path(__file__).parent.resolve()
-KERNEL_FILE  = REPO / "kernel.cuh"
 RESULTS_FILE = REPO / "results.csv"
 BUILD_DIR    = REPO / "build"
-BENCH_BIN    = BUILD_DIR / "bench"
 JSON_OUT     = BUILD_DIR / "_bench_result.json"
 
 BASE_URL = "https://inference-api.nvidia.com/v1/"
 DEFAULT_MODEL = "aws/anthropic/bedrock-claude-opus-4-6"
 
-# Must match the number of type variants in bench.cu.
-NUM_TYPE_VARIANTS = 5
+# ---------------------------------------------------------------------------
+# Per-kernel configuration.  Set by configure_kernel() after arg parsing.
+# ---------------------------------------------------------------------------
+KERNEL_CONFIGS = {
+    "memcpy":  {"dir": "kernels/memcpy",  "target": "bench_memcpy",  "num_variants": 5},
+    "stencil": {"dir": "kernels/stencil", "target": "bench_stencil", "num_variants": 2},
+    "matmul":  {"dir": "kernels/matmul",  "target": "bench_matmul",  "num_variants": 3},
+    "sigmoid": {"dir": "kernels/sigmoid", "target": "bench_sigmoid", "num_variants": 3},
+}
+
+KERNEL_FILE: Path
+BENCH_BIN: Path
+BENCH_TARGET: str
+NUM_TYPE_VARIANTS: int
+
+
+def configure_kernel(name: str) -> None:
+    global KERNEL_FILE, BENCH_BIN, BENCH_TARGET, NUM_TYPE_VARIANTS
+    cfg = KERNEL_CONFIGS[name]
+    KERNEL_FILE       = REPO / cfg["dir"] / "kernel.cuh"
+    BENCH_BIN         = BUILD_DIR / cfg["target"]
+    BENCH_TARGET      = cfg["target"]
+    NUM_TYPE_VARIANTS = cfg["num_variants"]
 
 # ---------------------------------------------------------------------------
 # System prompt - loaded from the idea skill file next to this script.
@@ -99,7 +118,8 @@ def cmake_configure() -> bool:
 
 def cmake_build() -> tuple[bool, str]:
     r = subprocess.run(
-        ["cmake", "--build", str(BUILD_DIR), "--parallel"],
+        ["cmake", "--build", str(BUILD_DIR), "--parallel",
+         "--target", BENCH_TARGET],
         capture_output=True, text=True, cwd=str(REPO),
     )
     if r.returncode != 0:
@@ -639,7 +659,16 @@ Usage:
                     help=f"model identifier (default: {DEFAULT_MODEL})")
     ap.add_argument("--api-key", type=str, default=None,
                     help="NVIDIA inference API key (overrides NVIDIA_API_KEY_AUTOCUDA env var)")
+    ap.add_argument(
+        "--kernel", "-k",
+        choices=tuple(KERNEL_CONFIGS),
+        default="memcpy",
+        help="which kernel to optimize: "
+             + ", ".join(KERNEL_CONFIGS) + " (default: memcpy)",
+    )
     args = ap.parse_args()
+
+    configure_kernel(args.kernel)
 
     api_key = args.api_key or os.environ.get("NVIDIA_API_KEY_AUTOCUDA")
     if not api_key:

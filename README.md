@@ -11,7 +11,17 @@ a log of experiments and (hopefully) a faster kernel.
 
 ## How it works
 
-The repo is deliberately kept small and only has three files that matter:
+The repo ships several example kernels under `kernels/`, each with its own
+fixed benchmark harness and a naive starter kernel:
+
+| Kernel | Description | Key metric |
+|--------|-------------|------------|
+| `memcpy` | Vectorised device-to-device copy | memory-bandwidth |
+| `stencil` | 5-point heat equation with constant boundary conditions | memory-bandwidth |
+| `matmul` | Dense matrix multiplication C = A * B | compute-bandwidth |
+| `sigmoid` | PyTorch-style element-wise sigmoid | memory-bandwidth |
+
+Each kernel directory has two files:
 
 - **`bench.cu`** - fixed [nvbench](https://github.com/NVIDIA/nvbench) harness.
   Not modified.
@@ -20,9 +30,13 @@ The repo is deliberately kept small and only has three files that matter:
   instantiations. Everything is fair game: vectorisation, memory access
   patterns, block size, loop structure, type-specific specialisations, etc.
   **This file is edited and iterated on by the agent.**
-- **`autocuda.py`** - the outer loop. Reads the current kernel and experiment
+
+The outer loop is driven by:
+
+- **`autocuda.py`** - reads the current kernel and experiment
   history, asks Claude for one improvement, applies it, benchmarks, and keeps or
-  reverts. **This file is not edited by the agent.**
+  reverts. **This file is not edited by the agent.** Use `--kernel <name>` to
+  select which kernel to optimize.
 
 The optimization target is configurable:
 
@@ -42,16 +56,17 @@ time).
 3.10+, and an [Anthropic API key](https://console.anthropic.com/).
 
 ```bash
-# 1. Build the benchmark
+# 1. Build all benchmarks
 cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 
 # 2. Run a manual baseline to verify setup
-./build/bench
+./build/bench_memcpy
 
-# 3. Run the autonomous optimizer
+# 3. Run the autonomous optimizer on a specific kernel
 export ANTHROPIC_API_KEY=sk-ant-...
-python autocuda.py --metric memory-bandwidth --iterations 30
+python autocuda.py --kernel memcpy --metric memory-bandwidth --iterations 30
+python autocuda.py --kernel matmul --metric compute-bandwidth --iterations 30
 ```
 
 ## Running the agent
@@ -63,8 +78,10 @@ it asks Claude for one kernel change, applies it, benchmarks, and keeps or
 reverts.
 
 ```bash
-python autocuda.py --metric memory-bandwidth --iterations 30
-python autocuda.py --metric time --iterations 20 --bench-timeout 30
+python autocuda.py --kernel memcpy  --metric memory-bandwidth --iterations 30
+python autocuda.py --kernel matmul  --metric compute-bandwidth --iterations 20
+python autocuda.py --kernel sigmoid --metric memory-bandwidth --iterations 20
+python autocuda.py --kernel stencil --metric memory-bandwidth --iterations 20
 ```
 
 The agent's optimization strategy is defined in
@@ -80,11 +97,22 @@ results.
 ## Project structure
 
 ```
-bench.cu            - fixed nvbench harness (do not modify)
-kernel.cuh          - kernel source (agent modifies this)
-CMakeLists.txt      - build system (do not modify)
-autocuda.py         - autonomous API-loop driver
-results.csv         - experiment log (written by agent / script)
+kernels/
+  memcpy/            - vectorised device-to-device copy
+    bench.cu         - fixed nvbench harness (do not modify)
+    kernel.cuh       - kernel source (agent modifies this)
+  stencil/           - 5-point heat equation stencil
+    bench.cu
+    kernel.cuh
+  matmul/            - dense matrix multiplication
+    bench.cu
+    kernel.cuh
+  sigmoid/           - PyTorch-style sigmoid operator
+    bench.cu
+    kernel.cuh
+CMakeLists.txt       - build system (do not modify)
+autocuda.py          - autonomous API-loop driver (--kernel selects workload)
+results.csv          - experiment log (written by agent / script)
 
 cuda-kernel-optimization-idea-skill.md       - skill: generate one kernel optimization
 cuda-kernel-optimization-iteration-skill.md  - skill: autonomous experiment loop
@@ -92,11 +120,14 @@ cuda-kernel-optimization-iteration-skill.md  - skill: autonomous experiment loop
 
 ## Design choices
 
-- **Single file to modify.** The agent only touches `kernel.cuh`. This keeps
-  scope manageable and diffs reviewable.
+- **Single file to modify.** The agent only touches `kernel.cuh` for the
+  selected workload. This keeps scope manageable and diffs reviewable.
 - **Fixed benchmark harness.** `bench.cu` and `CMakeLists.txt` are never
   modified. The benchmark is the ground truth - consistent and reproducible.
-- **Multiple benchmark states.** The harness can sweep across types, sizes, or
+- **Multiple kernels.** The repo ships several example workloads (memcpy,
+  stencil, matmul, sigmoid) to evaluate how well the optimizer generalises
+  across different problem types.
+- **Multiple benchmark states.** Each harness can sweep across types, sizes, or
   other axes. This forces the agent to find optimizations that generalise.
 - **Self-contained.** One GPU, one kernel file, one metric. No distributed
   builds, no complex configs.

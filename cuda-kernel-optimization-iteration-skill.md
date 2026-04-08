@@ -6,26 +6,31 @@ run until stopped.
 
 ## Project layout
 
+The repo contains several target kernels under `kernels/`. Each kernel directory has the same structure:
+
 | File | Purpose | Editable? |
 |------|---------|-----------|
-| `kernel.cuh` | Kernel + launch config | **YES - only this** |
-| `bench.cu` | Fixed nvbench harness | NO |
+| `kernels/<kernel>/kernel.cuh` | Kernel + launch config | **YES - only this** |
+| `kernels/<kernel>/bench.cu` | Fixed nvbench harness | NO |
 | `CMakeLists.txt` | Build system | NO |
 | `results.csv` | Experiment log | Written by you |
 | `cuda-kernel-optimization-idea-skill.md` | Goals, constraints, and optimization philosophy. Do this every iteration. | NO |
+
+Each subdirectory of `kernels/` is a separate kernel target. List them with `ls kernels/` to see what's available.
 
 ## Setup
 
 To set up a new experiment, work with the user to:
 
-1. **Agree on a run tag:** propose a tag based on today's date (e.g. `2026-04-05`). The branch `autocuda/<tag>` must not already exist - this is a fresh run.
-2. **Create the branch:** `git checkout -b autocuda/<tag>` from current `main`. Every successful experiment will be committed to this branch (see **The experiment loop** below).
-3. **Read the in-scope files.** The repo is small; read the files listed in project layout.
-4. **Agree on the optimization target** with the user: memory-bandwidth (GiB/s, higher is better), compute-bandwidth (GFLOP/s, higher is better), or time (ms, lower is better).
-5. **Build the benchmark:** `cmake -B build -S . -DCMAKE_BUILD_TYPE=Release && cmake --build build --parallel`
-6. **Verify the benchmark runs:** `./build/bench`
-7. **Initialize `results.csv`** with just the header row (`timestamp,metric_value,unit,status,description`). The baseline will be recorded after the first run.
-8. **Confirm and go.** Confirm setup looks good.
+1. **Agree on which kernel to optimize.** List `kernels/` and ask the user which one to target. Read its `bench.cu` and `kernel.cuh` to understand the workload.
+2. **Agree on a run tag:** propose a tag based on today's date (e.g. `2026-04-05`). The branch `autocuda/<tag>` must not already exist - this is a fresh run.
+3. **Create the branch:** `git checkout -b autocuda/<tag>` from current `main`. Every successful experiment will be committed to this branch (see **The experiment loop** below).
+4. **Read the in-scope files.** Read `kernels/<kernel>/kernel.cuh`, `kernels/<kernel>/bench.cu`, and `cuda-kernel-optimization-idea-skill.md`.
+5. **Agree on the optimization target** with the user: memory-bandwidth (GiB/s, higher is better), compute-bandwidth (GFLOP/s, higher is better), or time (ms, lower is better).
+6. **Build the benchmark:** `cmake -B build -S . -DCMAKE_BUILD_TYPE=Release && cmake --build build --parallel --target bench_<kernel>`
+7. **Verify the benchmark runs:** `./build/bench_<kernel>` (e.g. `./build/bench_memcpy`)
+8. **Initialize `results.csv`** with just the header row (`timestamp,metric_value,unit,status,description`). The baseline will be recorded after the first run.
+9. **Confirm and go.** Confirm setup looks good.
 
 Once you get confirmation, kick off the experimentation.
 
@@ -34,8 +39,10 @@ Once you get confirmation, kick off the experimentation.
 Each experiment is a single edit-build-benchmark cycle. The benchmark runs for a fixed time budget (~15s total across all type variants). You build and run simply as:
 
 ```bash
-cmake --build build --parallel && ./build/bench
+cmake --build build --parallel --target bench_<kernel> && ./build/bench_<kernel>
 ```
+
+Replace `<kernel>` with the workload name (e.g. `memcpy`, `stencil`, `matmul`, `sigmoid`).
 
 The goals, constraints, simplicity criterion, abstraction-level preference, and hypothesis-driven approach are all defined in `cuda-kernel-optimization-idea-skill.md`. Read it and follow it.
 
@@ -71,17 +78,17 @@ timestamp,metric_value,unit,status,description
 
 LOOP FOREVER:
 
-1. Read the current `kernel.cuh` and `results.csv`.
+1. Read the current `kernels/<kernel>/kernel.cuh` and `results.csv`.
 2. Choose one optimization to try. Follow the hypothesis-driven approach from `cuda-kernel-optimization-idea-skill.md`.
-3. Edit `kernel.cuh`.
+3. Edit `kernels/<kernel>/kernel.cuh`.
 4. Build and benchmark:
    ```bash
-   cmake --build build --parallel && ./build/bench
+   cmake --build build --parallel --target bench_<kernel> && ./build/bench_<kernel>
    ```
 5. Extract the metric from the benchmark output.
 6. If the benchmark crashed, see **Crashes** below.
-7. If the metric **improved**: keep the change, **commit `kernel.cuh`** (`git add kernel.cuh && git commit -m "iteration N: <description>"`), and record as `improved`.
-8. If the metric **regressed or stayed the same**: revert `kernel.cuh` to the previous best (do **not** commit). Record as `regressed`.
+7. If the metric **improved**: keep the change, **commit `kernel.cuh`** (`git add kernels/<kernel>/kernel.cuh && git commit -m "iteration N: <description>"`), and record as `improved`.
+8. If the metric **regressed or stayed the same**: revert `kernels/<kernel>/kernel.cuh` to the previous best (do **not** commit). Record as `regressed`.
 9. Append a row to `results.csv`.
 10. Go to 1.
 
