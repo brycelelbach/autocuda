@@ -19,7 +19,7 @@
 
 NVBENCH_DECLARE_TYPE_STRINGS(__half, "F16", "half precision float");
 
-static constexpr int MAT_DIM = 1024;
+static constexpr int MAT_DIM = 2048;
 
 static bool running_under_ncu()
 {

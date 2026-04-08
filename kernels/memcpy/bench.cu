@@ -26,8 +26,8 @@ inline bool operator==(const cuDoubleComplex& a, const cuDoubleComplex& b)
     return cuCreal(a) == cuCreal(b) && cuCimag(a) == cuCimag(b);
 }
 
-// 256 MiB total traffic per type - element count scales with sizeof(T).
-static constexpr std::size_t DATA_BYTES = 256ULL * 1024 * 1024;
+// 2 GiB per buffer, 4 GiB total traffic (src + dst) per type.
+static constexpr std::size_t DATA_BYTES = 2ULL * 1024 * 1024 * 1024;
 
 static bool running_under_ncu()
 {

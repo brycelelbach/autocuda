@@ -18,7 +18,8 @@
 
 #include "kernel.cuh"
 
-static constexpr std::size_t DATA_BYTES = 256ULL * 1024 * 1024;
+// 4 GiB total footprint (input + output grids) per type.
+static constexpr std::size_t DATA_BYTES = 4ULL * 1024 * 1024 * 1024;
 
 static bool running_under_ncu()
 {
