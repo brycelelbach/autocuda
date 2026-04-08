@@ -74,6 +74,10 @@ Form a hypothesis about what limits performance, propose a change that tests it,
 
 If obvious ideas are exhausted, think harder. Re-read the kernel for missed opportunities. Try combining near-misses from previous trials. Try more radical structural changes. Try the opposite of what you've been doing.
 
+## Don't fiddle with magic numbers
+
+A few trials to tune block sizes, unroll factors, or other magic constants is fine, but don't get stuck sweeping knobs. Prioritize structural changes - algorithms, access patterns, redundant work - over parameter tuning.
+
 ## Output format
 
 Return ONLY:
