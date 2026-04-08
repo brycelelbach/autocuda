@@ -32,7 +32,7 @@ Each subdirectory of `kernels/` is a separate kernel target. List them with `ls 
 To set up a new experiment, work with the user to:
 
 1. **Agree on which kernel to optimize.** List `kernels/` and ask the user which one to target. Read its `bench.cu` and `kernel.cuh` to understand the workload.
-2. **Agree on a run tag:** propose a tag based on the current date and time in `YYYY-MM-DD-HH-MM-SS` format (e.g. `2026-04-05-14-32-01`). The branch `experiments/<tag>` must not already exist - this is a fresh run.
+2. **Agree on a run tag:** propose a tag in `<kernel>/YYYY-MM-DD-HH-MM-SS` format (e.g. `memcpy/2026-04-05-14-32-01`). The branch `experiments/<tag>` must not already exist - this is a fresh run.
 3. **Create the branch:** `git checkout -b experiments/<tag>` from current `main`. Every successful trial will be committed to this branch (see **The trial loop** below).
 4. **Read the in-scope files.** Read `kernels/<kernel>/kernel.cuh`, `kernels/<kernel>/bench.cu`, and `cuda-kernel-optimization-trial.md`.
 5. **Agree on the optimization target** with the user: memory-bandwidth (GiB/s, higher is better), compute-bandwidth (GFLOP/s, higher is better), or time (ms, lower is better).

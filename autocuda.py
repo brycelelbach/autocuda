@@ -652,10 +652,9 @@ Usage:
         help="how metrics from different benchmark variants should be combined: min, mean, or max "
         "(default: mean).",
     )
-    default_tag = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    ap.add_argument("--tag", type=str, default=default_tag,
+    ap.add_argument("--tag", type=str, default=None,
                     help="run tag for the git branch experiments/<tag> "
-                    f"(default: {default_tag})")
+                    "(default: <kernel>/<YYYY-MM-DD-HH-MM-SS>)")
     ap.add_argument("--continue", dest="continue_run", action="store_true",
                     default=False,
                     help="resume on an existing experiments/<tag> branch instead of creating a new one")
@@ -673,6 +672,8 @@ Usage:
              + ", ".join(KERNEL_CONFIGS) + " (default: memcpy)",
     )
     args = ap.parse_args()
+    if args.tag is None:
+        args.tag = f"{args.kernel}/{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}"
 
     configure_kernel(args.kernel)
 
