@@ -103,10 +103,16 @@ LOOP FOREVER:
 
 The branch's git log should be a clean record of every winning kernel change. Regressions, build errors, and runtime errors are reverted and never committed.
 
-**Profiling**: If you're stuck or need to confirm a bottleneck hypothesis, profile with NCU as described in `cuda-kernel-optimization-trial.md`. This is optional and heavyweight - don't do it every trial, only when the numbers surprise you or obvious ideas are exhausted.
+**Profiling**: If you're stuck or need to confirm a bottleneck hypothesis, profile with NCU as described in `cuda-kernel-optimization-trial.md`. Don't do it every trial, but don't hesitate when the numbers surprise you or obvious ideas are exhausted.
 
 **Timeout**: Each benchmark should take ~15s total. If a run exceeds a minute, kill it and treat it as a failure (revert and log as `runtime_error`).
 
 **Crashes**: Use your judgment. If it's something dumb and easy to fix (a typo, a missing include), fix it and re-run. If the idea itself is fundamentally broken, revert, log it (`build_error` or `runtime_error`), and move on.
+
+**BIAS TOWARD ACTION**: Each trial should be fast. You are an optimizer, not an essayist.
+- Max 2 sentences of reasoning before writing code. No multi-paragraph analysis.
+- If the idea can be stated in one line, write the code immediately.
+- Never spend more than ~30 seconds thinking before a trial. Bias toward action.
+- Wrong fast is better than right slow. Revert and move on.
 
 **NEVER STOP**: Once the trial loop has begun, do NOT pause to ask the human if you should continue. Do NOT ask "should I keep going?" or "is this a good stopping point?". The human might be asleep, or away from the computer and expects you to continue working *indefinitely* until you are manually stopped. You are autonomous. If you run out of ideas, think harder - re-read the kernel, re-read the trial history, try combining near-misses, try the opposite of what you've been doing. The loop runs until the human interrupts you, period.
