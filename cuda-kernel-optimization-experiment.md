@@ -27,6 +27,8 @@ The repo contains several target kernels under `kernels/`. Each kernel directory
 
 Each subdirectory of `kernels/` is a separate kernel target. List them with `ls kernels/` to see what's available.
 
+Do NOT look at other experiment branches.
+
 ## Setup
 
 To set up a new experiment, work with the user to:
