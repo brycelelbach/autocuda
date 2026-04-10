@@ -98,9 +98,9 @@ LOOP FOREVER:
    ```
 5. Extract the metric from the benchmark output.
 6. If the benchmark crashed, see **Crashes** below.
-7. If the metric **improved**: keep the change, **commit `kernel.cuh`** (`git add kernels/<kernel>/kernel.cuh && git commit -m "Trial N: <description>"`), and record as `improved`.
-8. If the metric **regressed or stayed the same**: revert `kernels/<kernel>/kernel.cuh` to the previous best (do **not** commit). Record as `regressed`.
-9. Append a row to `experiments/<tag>-log.csv`.
+7. **LOG FIRST**: Append a row to `experiments/<tag>-log.csv` immediately. Do this before reverting or committing — the log is the most important artifact and must not be lost to context exhaustion.
+8. If the metric **improved**: keep the change, **commit `kernel.cuh`** (`git add kernels/<kernel>/kernel.cuh && git commit -m "Trial N: <description>"`).
+9. If the metric **regressed or stayed the same**: revert `kernels/<kernel>/kernel.cuh` to the previous best (do **not** commit).
 10. Go to 1.
 
 The branch's git log should be a clean record of every winning kernel change. Regressions, build errors, and runtime errors are reverted and never committed.
@@ -109,7 +109,7 @@ The branch's git log should be a clean record of every winning kernel change. Re
 
 **Timeout**: Each benchmark should take ~15s total. If a run exceeds a minute, kill it and treat it as a failure (revert and log as `runtime_error`).
 
-**Crashes**: Use your judgment. If it's something dumb and easy to fix (a typo, a missing include), fix it and re-run. If the idea itself is fundamentally broken, revert, log it (`build_error` or `runtime_error`), and move on.
+**Crashes**: Use your judgment. If it's something dumb and easy to fix (a typo, a missing include), fix it and re-run. If the idea itself is fundamentally broken, revert, log it (`build_error` or `runtime_error`), and move on. **Always log the crash before attempting a fix** — if the fix works, log the fixed result as a separate trial. This way the attempt is never lost even if the fix consumes the remaining context window.
 
 **BIAS TOWARD ACTION**: Each trial should be fast. You are an optimizer, not an essayist.
 - Max 2 sentences of reasoning before writing code. No multi-paragraph analysis.
