@@ -8,6 +8,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import pandas as pd
+from adjustText import adjust_text
 
 
 def parse_args():
@@ -29,7 +30,7 @@ def parse_args():
     p.add_argument(
         "--max-labels",
         type=int,
-        default=6,
+        default=10,
         help="Maximum number of improvement labels to show (default: 6)",
     )
     p.add_argument(
@@ -153,7 +154,7 @@ def plot(
     ACCENT = "#a6e3a1"
     ACCENT_DARK = "#40a050"
     GRID = "#45475a"
-    REJECTED = "#585b70"
+    REJECTED = "#ff6b6b"
     LABEL_BG = "#2a2a3e"
     LABEL_BORDER = "#74c790"
     LABEL_TEXT = "#a6e3a1"
@@ -227,7 +228,10 @@ def plot(
         (labels_sorted["timestamp"] - t_start).dt.total_seconds() / 60.0
     )
 
-    for i, (_, row) in enumerate(labels_sorted.iterrows()):
+    texts = []
+    label_xs = []
+    label_ys = []
+    for _, row in labels_sorted.iterrows():
         desc = shorten_description(str(row["description"]))
         val = row["best_y"]
         delta = row["delta"]
@@ -237,31 +241,39 @@ def plot(
             f"{format_delta(delta, is_pct)} \u2192 {format_value(val, is_pct)}: {desc}"
         )
 
-        if i % 2 == 0:
-            x_off, y_off = 10, -(12 + 14 * (i // 2))
-            va = "top"
-        else:
-            x_off, y_off = 10, 12 + 14 * (i // 2)
-            va = "bottom"
+        label_xs.append(elapsed)
+        label_ys.append(val)
+        texts.append(
+            ax.text(
+                elapsed,
+                val,
+                label_text,
+                fontsize=8,
+                color=LABEL_TEXT,
+                fontweight="bold",
+                ha="left",
+                va="center",
+                bbox=dict(
+                    boxstyle="round,pad=0.3",
+                    facecolor=LABEL_BG,
+                    edgecolor=LABEL_BORDER,
+                    alpha=0.95,
+                    linewidth=0.8,
+                ),
+                zorder=10,
+            )
+        )
 
-        ax.annotate(
-            label_text,
-            xy=(elapsed, val),
-            xytext=(x_off, y_off),
-            textcoords="offset points",
-            fontsize=8,
-            color=LABEL_TEXT,
-            fontweight="bold",
-            ha="left",
-            va=va,
-            bbox=dict(
-                boxstyle="round,pad=0.3",
-                facecolor=LABEL_BG,
-                edgecolor=LABEL_BORDER,
-                alpha=0.95,
-                linewidth=0.8,
-            ),
-            zorder=10,
+    if texts:
+        adjust_text(
+            texts,
+            x=label_xs,
+            y=label_ys,
+            ax=ax,
+            force_text=(1.5, 2.0),
+            force_points=(1.5, 2.0),
+            expand=(1.5, 1.5),
+            arrowprops=dict(arrowstyle="-", color=LABEL_BORDER, lw=0.8),
         )
 
     total_experiments = len(df)
