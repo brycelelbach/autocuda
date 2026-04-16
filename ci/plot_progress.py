@@ -147,7 +147,20 @@ def plot(
     model: str | None = None,
 ):
     is_pct = peak is not None
+
+    BG = "#1e1e2e"
+    FG = "#cdd6f4"
+    ACCENT = "#a6e3a1"
+    ACCENT_DARK = "#40a050"
+    GRID = "#45475a"
+    REJECTED = "#585b70"
+    LABEL_BG = "#2a2a3e"
+    LABEL_BORDER = "#74c790"
+    LABEL_TEXT = "#a6e3a1"
+
     fig, ax = plt.subplots(figsize=(12, 12))
+    fig.patch.set_facecolor(BG)
+    ax.set_facecolor(BG)
 
     t_start = df["timestamp"].min()
 
@@ -164,9 +177,9 @@ def plot(
     ax.scatter(
         rejected["elapsed_min"],
         rejected["y_val"],
-        c="#d5d5d5",
+        c=REJECTED,
         s=8,
-        alpha=0.35,
+        alpha=0.4,
         zorder=2,
         label="Rejected / failed",
     )
@@ -174,10 +187,10 @@ def plot(
     ax.scatter(
         accepted["elapsed_min"],
         accepted["y_val"],
-        c="#2ecc71",
+        c=ACCENT,
         s=45,
         zorder=4,
-        edgecolors="black",
+        edgecolors="#1e1e2e",
         linewidths=0.5,
         label="Accepted",
     )
@@ -191,7 +204,7 @@ def plot(
         step_times,
         step_vals,
         where="post",
-        color="#27ae60",
+        color=ACCENT,
         linewidth=2.5,
         alpha=0.85,
         zorder=3,
@@ -237,14 +250,14 @@ def plot(
             xytext=(x_off, y_off),
             textcoords="offset points",
             fontsize=8,
-            color="#1a5c2a",
+            color=LABEL_TEXT,
             fontweight="bold",
             ha="left",
             va=va,
             bbox=dict(
                 boxstyle="round,pad=0.3",
-                facecolor="#f0faf0",
-                edgecolor="#27ae60",
+                facecolor=LABEL_BG,
+                edgecolor=LABEL_BORDER,
                 alpha=0.95,
                 linewidth=0.8,
             ),
@@ -268,13 +281,13 @@ def plot(
     baseline_str = format_value(baseline_y, is_pct)
     best_str = format_value(best_y, is_pct)
 
-    ax.set_xlabel("Elapsed Time", fontsize=12)
+    ax.set_xlabel("Elapsed Time", fontsize=12, color=FG)
 
     if is_pct:
-        ax.set_ylabel(f"{unit} Utilization (%)", fontsize=12)
+        ax.set_ylabel(f"{unit} Utilization (%)", fontsize=12, color=FG)
         ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.0f%%"))
     else:
-        ax.set_ylabel(unit, fontsize=12)
+        ax.set_ylabel(unit, fontsize=12, color=FG)
         ax.yaxis.set_major_formatter(
             mticker.FuncFormatter(lambda v, _: f"{v:,.0f}" if v >= 1000 else f"{v:.0f}")
         )
@@ -285,9 +298,16 @@ def plot(
         f"({total_experiments} experiments, {n_accepted} accepted, {hours:.1f}h)",
         fontsize=14,
         fontweight="bold",
+        color=FG,
     )
-    ax.legend(loc="upper left", fontsize=9, framealpha=0.9)
-    ax.grid(True, alpha=0.15, linestyle="--")
+    legend = ax.legend(
+        loc="upper left", fontsize=9, framealpha=0.9,
+        facecolor=BG, edgecolor=GRID, labelcolor=FG,
+    )
+    ax.grid(True, alpha=0.3, linestyle="--", color=GRID)
+    ax.tick_params(colors=FG)
+    for spine in ax.spines.values():
+        spine.set_color(GRID)
 
     def fmt_elapsed(x, _):
         h, m = divmod(int(x), 60)
