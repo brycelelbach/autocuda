@@ -50,10 +50,11 @@ def configure_kernel(name: str) -> None:
     NUM_TYPE_VARIANTS = cfg["num_variants"]
 
 # ---------------------------------------------------------------------------
-# System prompt - loaded from the trial skill SKILL.md next to this script.
+# Prompts - loaded from the prompts/ directory next to this script.
 # ---------------------------------------------------------------------------
-SKILL_FILE = REPO / "cuda-kernel-optimization-trial.md"
-SYSTEM_PROMPT = SKILL_FILE.read_text()
+PROMPTS_DIR = REPO / "prompts"
+SYSTEM_PROMPT = (PROMPTS_DIR / "optimize-cuda-kernel-trial.md").read_text()
+DECISION_SYSTEM_PROMPT = (PROMPTS_DIR / "optimize-cuda-kernel-decision.md").read_text()
 
 # ---------------------------------------------------------------------------
 # Git helpers
@@ -462,31 +463,6 @@ def metric_delta_str(metric: str, value: float, best: float) -> tuple[str, float
 # ---------------------------------------------------------------------------
 # LLM-based accept/reject decision
 # ---------------------------------------------------------------------------
-DECISION_SYSTEM_PROMPT = """\
-You are evaluating whether to accept or reject a proposed change to a CUDA \
-kernel that is being iteratively optimized for performance.
-
-## Decision criteria
-
-1. **Performance improvement**: Accept changes that improve the target metric.
-2. **Simplicity trade-off**: Accept changes that simplify the code (fewer \
-lines, clearer logic, higher-level abstractions) even if they cause a \
-minor performance regression.  A small regression is acceptable when the \
-code is meaningfully simpler or more maintainable.
-3. **Mixed variant results**: If some type variants improve and others regress, \
-weigh the overall picture.  A change that substantially improves most variants \
-but slightly regresses one is generally worth keeping.
-4. **No benefit**: Reject changes that neither improve performance nor simplify \
-the code.
-
-## Output format
-
-Return ONLY:
-<decision>accept</decision> or <decision>reject</decision>
-<reasoning>Brief explanation of your decision (1-3 sentences)</reasoning>
-"""
-
-
 def format_variant_table(
     metric: str,
     unit: str,

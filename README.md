@@ -84,13 +84,14 @@ python autocuda.py --kernel stencil --metric memory-bandwidth --trials 20
 ```
 
 The agent's optimization strategy is defined in
-`cuda-kernel-optimization-trial.md`.
+`prompts/optimize-cuda-kernel-trial.md`.
 
 ### Interactive mode (Claude Code / Cursor)
 
-Open this directory in your agent-enabled editor and point it at
-`cuda-kernel-optimization-experiment.md`. The skill instructs the agent to
-run trials autonomously - you can leave it running and come back to results.
+Open this directory in your agent-enabled editor and point it at the
+`optimize-cuda-kernel` skill (`skills/optimize-cuda-kernel/SKILL.md`). The
+skill instructs the agent to run trials autonomously - you can leave it
+running and come back to results.
 
 ## Project structure
 
@@ -112,8 +113,12 @@ CMakeLists.txt       - build system (do not modify)
 autocuda.py          - autonomous API-loop driver (--kernel selects workload)
 results.csv          - trial log (written by agent / script)
 
-cuda-kernel-optimization-trial.md       - skill: generate one kernel optimization trial
-cuda-kernel-optimization-experiment.md  - skill: autonomous experiment (runs trials in a loop)
+skills/
+  optimize-cuda-kernel/
+    SKILL.md         - skill: autonomous experiment (runs trials in a loop)
+prompts/
+  optimize-cuda-kernel-trial.md      - prompt: generate one kernel optimization trial
+  optimize-cuda-kernel-decision.md   - prompt: accept/reject a proposed kernel change
 ```
 
 ## Design choices
