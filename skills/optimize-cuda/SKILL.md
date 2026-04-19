@@ -38,6 +38,22 @@ Read `project-layout.md` before doing anything else. It tells you:
 
 ## Optimization strategy
 
+### Hypothesis-driven approach
+
+Do not follow a fixed checklist of optimization tricks. Infer what to try next from the evidence:
+
+- **The current source code** — what is the actual bottleneck? Memory throughput? Instruction throughput? Occupancy? Launch overhead? Host-device transfer? Synchronization?
+- **The metric** — bandwidth-bound, compute-bound, and latency-bound workloads need fundamentally different strategies.
+- **The trial history** — what has been tried, what worked, what failed, which direction are the numbers moving?
+
+Form a hypothesis about what limits performance, propose a change that tests it, and explain your reasoning. One incremental change per trial — each should test exactly one hypothesis.
+
+If obvious ideas are exhausted, think harder. Re-read the source for missed opportunities. Try combining near-misses from previous trials. Try more radical structural changes. Try the opposite of what you've been doing.
+
+### Structural changes
+
+Prioritize structural changes — algorithms, access patterns, redundant work — over micro-optimization and parameter tuning. Think big picture.
+
 ### Simplicity
 
 All else being equal, simpler is better. A small improvement that adds ugly complexity is not worth it. Conversely, removing something and getting equal or better results is a great outcome — that's a simplification win. When evaluating a change, weigh the complexity cost against the improvement magnitude. A tiny improvement that adds 20 lines of hacky template metaprogramming? Probably not worth it. A tiny improvement from deleting code? Definitely keep. Equal performance with much simpler code? Keep.
@@ -61,19 +77,9 @@ The CUDA ecosystem offers libraries at many levels. Prefer the highest level tha
 - **Cooperative groups** — flexible thread grouping beyond the traditional block/warp model.
 - **PTX intrinsics / inline assembly** — last resort for squeezing out final percentage points when profiling proves it necessary.
 
-### Hypothesis-driven approach
+#### Avoid knob tuning
 
-Do not follow a fixed checklist of optimization tricks. Infer what to try next from the evidence:
-
-- **The current source code** — what is the actual bottleneck? Memory throughput? Instruction throughput? Occupancy? Launch overhead? Host-device transfer? Synchronization?
-- **The metric** — bandwidth-bound, compute-bound, and latency-bound workloads need fundamentally different strategies.
-- **The trial history** — what has been tried, what worked, what failed, which direction are the numbers moving?
-
-Form a hypothesis about what limits performance, propose a change that tests it, and explain your reasoning. One incremental change per trial — each should test exactly one hypothesis.
-
-If obvious ideas are exhausted, think harder. Re-read the source for missed opportunities. Try combining near-misses from previous trials. Try more radical structural changes. Try the opposite of what you've been doing.
-
-A few trials to tune block sizes, unroll factors, or other magic constants is fine, but don't get stuck sweeping knobs. Prioritize structural changes — algorithms, access patterns, redundant work — over parameter tuning.
+A few trials to tune block sizes, unroll factors, or other magic constants is fine, but don't get stuck sweeping knobs one at a time.
 
 ### Profiling
 
@@ -136,6 +142,8 @@ Then, LOOP FOREVER:
 11. Go to 1.
 
 The branch's git log should be a clean record of every winning change. Regressions, build errors, validation failures, and runtime errors are reverted and never committed.
+
+Acceptable improvements should be statistically significant — at least 0.5%.
 
 ### Logging format
 
