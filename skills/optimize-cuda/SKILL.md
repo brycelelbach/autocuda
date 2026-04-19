@@ -29,8 +29,8 @@ Read `project-layout.md` before doing anything else. It tells you:
 ## Setup
 
 1. **Read `project-layout.md`.** Understand the project structure, editable files, build commands, validation commands, benchmark commands, metric, and timeouts.
-2. **Choose a run tag.** Use `YYYY-MM-DD-HH-MM-SS` format (e.g. `2026-04-05-14-32-01`). The branch `experiments/<tag>` must not already exist.
-3. **Create the branch.** `git checkout -b experiments/<tag>` from the current branch.
+2. **Choose a run tag.** Unless otherwise specified, use the starting date and time in the `YYYY-MM-DD-HH-MM-SS` format (e.g. `2026-04-05-14-32-01`) for the tag name. The branch `experiment/<tag>` must not already exist.
+3. **Create the branch.** `git checkout -b experiment/<tag>` from the current branch.
 4. **Read the editable source files** listed in `project-layout.md`.
 5. **Build, validate, and benchmark.** Run the commands from `project-layout.md` to verify everything works. This establishes the baseline.
 6. **Initialize the trial log** at `experiments/<tag>-log.csv` (creating `experiments/` if needed) with the header row (`timestamp,metric_value,unit,status,description`) and a baseline entry from step 5.

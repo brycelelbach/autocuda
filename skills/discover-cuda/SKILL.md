@@ -87,13 +87,10 @@ Base these on observed times during discovery, with some margin.
 - CUDA toolkit version.
 - Any notable environment details (driver version, OS, etc.).
 
-## Confirm with the user
+## Operating rules
 
-Before finishing, present a summary of what you found:
+**ACT AUTONOMOUSLY.** Do not ask the user for permission before installing packages, running builds, or executing benchmarks. If a dependency is missing, install it. If a build flag looks wrong, fix it. If something needs `sudo`, use it. The user expects you to solve problems, not ask about them.
 
-- Which files are editable vs read-only.
-- The metric, unit, and direction.
-- The baseline benchmark result.
-- Any concerns or ambiguities.
+**Only stop for genuine ambiguity.** If the project has multiple benchmark harnesses and you cannot determine which one to use, or if you cannot tell which files are in scope for optimization, ask. Otherwise, make a reasonable choice and move on. You can always revise `project-layout.md` later.
 
-Get the user's confirmation that the layout is correct before writing `project-layout.md`.
+**Confirm at the end.** Once `project-layout.md` is written, present a brief summary of what you found (editable vs read-only files, metric, baseline result, any concerns) so the user can sanity-check before optimization begins.
