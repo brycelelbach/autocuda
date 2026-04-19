@@ -42,9 +42,14 @@ Read `project-layout.md` before doing anything else. It tells you:
 
 All else being equal, simpler is better. A small improvement that adds ugly complexity is not worth it. Conversely, removing something and getting equal or better results is a great outcome — that's a simplification win. When evaluating a change, weigh the complexity cost against the improvement magnitude. A tiny improvement that adds 20 lines of hacky template metaprogramming? Probably not worth it. A tiny improvement from deleting code? Definitely keep. Equal performance with much simpler code? Keep.
 
-### Abstraction level
+### Libraries over hand-written kernels
 
-Prefer higher-level libraries and abstractions over hand-rolled equivalents when they are available in the build environment. They are more portable, less error-prone, and usually well-tuned. Only drop down to lower-level primitives when you have evidence that the high-level version is the bottleneck. "I can write it by hand" is not a reason — "the library version leaves measurable performance on the table" is.
+**Strongly prefer optimized libraries over hand-written CUDA kernels.** NVIDIA's libraries (cuBLAS, cuDNN, cuFFT, etc.) are tuned by domain experts across generations of hardware. A hand-written kernel that beats a library call is rare and fragile — it may win on one GPU and lose on the next. Your first instinct when optimizing a hand-written kernel should be: can I replace this with a library call?
+
+Only write custom kernels when:
+- No library covers the operation.
+- **Fusion**: multiple library calls can be fused into a single kernel to eliminate intermediate memory traffic, reducing launch overhead and memory round-trips.
+- Profiling proves the library version is the bottleneck *and* you have a concrete hypothesis for why a custom kernel would be faster.
 
 The CUDA ecosystem offers libraries at many levels. Prefer the highest level that meets your performance needs:
 
