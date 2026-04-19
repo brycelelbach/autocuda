@@ -62,7 +62,7 @@ def render_chart(rows, lower_better, width=900, height=260, pad=44):
     # Trajectory of kept changes (baseline + improved rows).
     kept = [(i, v) for (i, v, s) in numeric if s in ("baseline", "improved")]
 
-    parts = [f'<svg viewBox="0 0 {width} {height}" class="chart" preserveAspectRatio="none">']
+    parts = [f'<svg viewBox="0 0 {width} {height}" class="chart">']
     # axes
     parts.append(f'<line x1="{pad}" y1="{height - pad}" x2="{width - pad}" y2="{height - pad}" stroke="#333"/>')
     parts.append(f'<line x1="{pad}" y1="{pad}" x2="{pad}" y2="{height - pad}" stroke="#333"/>')
@@ -177,7 +177,7 @@ PAGE = """<!doctype html>
   .delta.pos {{ color: #3a8; }}
   .delta.neg {{ color: #c62; }}
   .muted {{ color: #666; }}
-  .chart {{ display: block; width: 100%; height: 260px; background: #0a0a0a;
+  .chart {{ display: block; width: 100%; height: auto; background: #0a0a0a;
             border-radius: 4px; }}
   table {{ width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px;
            font-family: ui-monospace, SFMono-Regular, monospace; }}
