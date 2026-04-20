@@ -158,7 +158,6 @@ def render_section(path: Path):
 PAGE = """<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
-<meta http-equiv="refresh" content="10">
 <title>autocuda dashboard</title>
 <style>
   :root {{ color-scheme: dark; }}
@@ -201,7 +200,57 @@ PAGE = """<!doctype html>
   <h1>autocuda dashboard</h1>
   <span class="path">{root}</span>
 </header>
+<main id="dashboard-body">
 {body}
+</main>
+<script>
+(function () {{
+  const REFRESH_MS = 10000;
+
+  function snapshot(root) {{
+    const state = {{}};
+    root.querySelectorAll('section').forEach(sec => {{
+      const h2 = sec.querySelector('h2');
+      if (!h2) return;
+      const key = h2.textContent;
+      sec.querySelectorAll('details').forEach((d, i) => {{
+        state[key + '|' + i] = d.open;
+      }});
+    }});
+    return state;
+  }}
+
+  function apply(root, state) {{
+    root.querySelectorAll('section').forEach(sec => {{
+      const h2 = sec.querySelector('h2');
+      if (!h2) return;
+      const key = h2.textContent;
+      sec.querySelectorAll('details').forEach((d, i) => {{
+        if (state[key + '|' + i]) d.open = true;
+      }});
+    }});
+  }}
+
+  async function refresh() {{
+    const host = document.getElementById('dashboard-body');
+    if (!host) return;
+    try {{
+      const resp = await fetch(window.location.pathname, {{cache: 'no-store'}});
+      if (!resp.ok) return;
+      const text = await resp.text();
+      const doc = new DOMParser().parseFromString(text, 'text/html');
+      const fresh = doc.getElementById('dashboard-body');
+      if (!fresh) return;
+      apply(fresh, snapshot(host));
+      const x = window.scrollX, y = window.scrollY;
+      host.replaceWith(document.adoptNode(fresh));
+      window.scrollTo(x, y);
+    }} catch (e) {{ /* transient; try again next tick */ }}
+  }}
+
+  setInterval(refresh, REFRESH_MS);
+}})();
+</script>
 </body></html>
 """
 
