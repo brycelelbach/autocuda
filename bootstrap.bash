@@ -9,11 +9,14 @@
 #   3. Symlinks each skill under this repo's skills/ into ~/.claude/skills/
 #      so Claude Code picks them up as user-scope skills.
 #
+# Can be run from a local checkout or piped via `curl ... | bash`. In the
+# piped case, the repo is cloned into ~/autocuda (override with AUTOCUDA_DIR).
+#
 # Safe to re-run. Existing ~/.claude/settings.json is backed up before overwrite.
 
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+REPO_URL="https://github.com/brycelelbach/autocuda.git"
 CLAUDE_DIR="${HOME}/.claude"
 SKILLS_DIR="${CLAUDE_DIR}/skills"
 SETTINGS_FILE="${CLAUDE_DIR}/settings.json"
@@ -22,6 +25,25 @@ BASHRC_MARKER_BEGIN="# >>> autocuda bootstrap >>>"
 BASHRC_MARKER_END="# <<< autocuda bootstrap <<<"
 
 log() { printf '[bootstrap] %s\n' "$*"; }
+
+# Resolve the repo path. When running from a local checkout, BASH_SOURCE[0]
+# names this file and we use its directory. When piped via `curl ... | bash`,
+# BASH_SOURCE[0] is empty (set -u would trip without the :- default), so we
+# clone the repo to a stable location and use that.
+_src="${BASH_SOURCE[0]:-}"
+if [[ -n "${_src}" && -f "${_src}" ]]; then
+    REPO_DIR="$(cd "$(dirname "$(readlink -f "${_src}")")" && pwd)"
+else
+    REPO_DIR="${AUTOCUDA_DIR:-${HOME}/autocuda}"
+    if [[ -d "${REPO_DIR}/.git" ]]; then
+        log "using existing autocuda checkout at ${REPO_DIR}"
+    else
+        command -v git >/dev/null 2>&1 || { log "ERROR: git not installed; cannot clone ${REPO_URL} into ${REPO_DIR}"; exit 1; }
+        log "cloning ${REPO_URL} into ${REPO_DIR}..."
+        git clone "${REPO_URL}" "${REPO_DIR}"
+    fi
+fi
+unset _src
 
 # ---------------------------------------------------------------------------
 # 1. Install Claude Code (native installer) if missing.
