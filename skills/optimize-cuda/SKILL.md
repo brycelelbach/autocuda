@@ -29,11 +29,11 @@ Read `project-layout.md` before doing anything else. It tells you:
 ## Setup
 
 1. **Read `project-layout.md`.** Understand the project structure, editable files, build commands, validation commands, benchmark commands, metric, and timeouts.
-2. **Choose a run tag.** Unless otherwise specified, use the starting date and time in the `YYYY-MM-DD-HH-MM-SS` format (e.g. `2026-04-05-14-32-01`) for the tag name. The branch `experiment/<tag>` must not already exist.
+2. **Choose a run tag.** Unless otherwise specified, use the starting date and time in the `YYYY-MM-DD-HH-MM-SS` format (e.g. `2026-04-05-14-32-01`) for the tag name. Get this from a Bash call to `date -u +%Y-%m-%d-%H-%M-%S` — do not invent it from context. The branch `experiment/<tag>` must not already exist.
 3. **Create the branch.** `git checkout -b experiment/<tag>` from the current branch.
 4. **Read the editable source files** listed in `project-layout.md`.
 5. **Build, validate, and benchmark.** Run the commands from `project-layout.md` to verify everything works. This establishes the baseline.
-6. **Initialize the trial log** at `experiments/<tag>-log.csv` (creating `experiments/` if needed) with the header row (`timestamp,metric_value,unit,status,description`) and a baseline entry from step 5.
+6. **Initialize the trial log** at `experiments/<tag>-log.csv` (creating `experiments/` if needed) with the header row (`timestamp,metric_value,unit,status,description`) and a baseline entry from step 5. Get the timestamp with `date -u +%Y-%m-%dT%H:%M:%S` — never fabricate it.
 7. **Start the trial loop.**
 
 ## Optimization strategy
@@ -123,6 +123,10 @@ Only the files listed as editable in `project-layout.md`. Respect any interface 
 
 Anything listed as read-only in `project-layout.md`: benchmark harnesses, test code, build system files, reference implementations. Do not add external dependencies unless they are already available in the build environment.
 
+### No peeking at prior experiments
+
+Do not read prior-run logs, prior source variants (e.g. `experimental/*_opt*.cu`), prior analysis notes, prior `experiment/*` branches, or any user-provided summary of past results. Only the current source and the current run's `experiments/<tag>-log.csv` may inform hypotheses. Every run is an independent investigation.
+
 ## The trial loop
 
 **The first trial** should always establish the baseline — validate and benchmark the unmodified code.
@@ -136,7 +140,7 @@ Then, LOOP FOREVER:
 5. Validate. If validation fails, see **Handling failures** below.
 6. Benchmark. If the benchmark times out or crashes, see **Handling failures** below. Use the timeouts from `project-layout.md`.
 7. Extract the metric from the benchmark output as described in `project-layout.md`.
-8. **LOG FIRST**: Append a row to `experiments/<tag>-log.csv` immediately. Do this before reverting or committing — the log is the most important artifact and must not be lost to context exhaustion.
+8. **LOG FIRST**: Append a row to `experiments/<tag>-log.csv` immediately. Do this before reverting or committing — the log is the most important artifact and must not be lost to context exhaustion. **The timestamp MUST come from a freshly-issued `date -u +%Y-%m-%dT%H:%M:%S` Bash call in the same turn as the append.** Do not reuse a timestamp from earlier in the conversation, do not estimate, do not skip the field. Every row must have a real, just-fetched timestamp, or the log loses its ordering and the audit trail is broken.
 9. If the metric **improved**: keep the change, **commit the modified files** (`git add <files> && git commit -m "Trial N: <description>"`).
 10. If the metric **regressed or stayed the same**: revert all modified files to the previous best (do **not** commit).
 11. Go to 1.
@@ -153,11 +157,13 @@ Log each trial to `experiments/<tag>-log.csv` (standard CSV with quoting for fie
 timestamp,metric_value,unit,status,description
 ```
 
-1. the current time as an ISO timestamp (e.g. `2026-04-05T14:32:01`) — determine this with a tool call
+1. the current UTC time as an ISO 8601 timestamp (e.g. `2026-04-05T14:32:01`). **This field is mandatory and MUST be obtained from a Bash call to `date -u +%Y-%m-%dT%H:%M:%S` in the same turn as the log append.** Never invent, estimate, round, copy from an earlier turn, or leave this field blank. A run of trials with wrong-ordered or missing timestamps destroys the ability to reconstruct what happened when, which is the log's main purpose.
 2. metric value achieved (e.g. `487.3412`) — use `N/A` for failures
 3. unit (e.g. `GiB/s`, `ms`, `GFLOP/s`)
 4. status: `baseline`, `improved`, `regressed`, `build_error`, `validation_error`, or `runtime_error`
 5. short text description of what this trial tried
+
+The canonical append pattern is two Bash calls: one to fetch the timestamp, then one to append the row. Do not collapse these into a single call that embeds a hand-written date string.
 
 Example:
 
