@@ -10,6 +10,7 @@ The page auto-refreshes so you can leave it open while the optimizer runs.
 import argparse
 import csv
 import html
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -42,47 +43,118 @@ def parse_metric(row):
         return None
 
 
+def parse_timestamp(row):
+    ts = row.get("timestamp", "") or ""
+    # Tolerate trailing "Z" (UTC designator) — Python 3.10's fromisoformat doesn't.
+    if ts.endswith("Z"):
+        ts = ts[:-1]
+    try:
+        return datetime.fromisoformat(ts)
+    except (TypeError, ValueError):
+        return None
+
+
+def fmt_duration(sec: float) -> str:
+    sec = max(int(sec), 0)
+    if sec < 60:
+        return f"{sec}s"
+    if sec < 3600:
+        return f"{sec // 60}m"
+    h, m = sec // 3600, (sec % 3600) // 60
+    return f"{h}h{m:02d}m" if m else f"{h}h"
+
+
 def render_chart(rows, lower_better, width=900, height=260, pad=44):
-    points = [(i, parse_metric(r), r.get("status", "")) for i, r in enumerate(rows)]
-    numeric = [(i, v, s) for (i, v, s) in points if v is not None]
-    if not numeric:
+    # CSV row order is the true trial order. Clamp each timestamp to the
+    # running max so backward or missing timestamps don't distort the x-axis.
+    parsed = []
+    running_max = None
+    for i, r in enumerate(rows):
+        v = parse_metric(r)
+        if v is None:
+            continue
+        raw_t = parse_timestamp(r)
+        if raw_t is None:
+            t = running_max
+        elif running_max is None:
+            t = raw_t
+        else:
+            t = raw_t if raw_t >= running_max else running_max
+        if t is None:
+            continue
+        running_max = t
+        parsed.append((i, raw_t, t, v, r.get("status", "")))
+    if not parsed:
         return '<div class="empty">no numeric data</div>'
 
-    vmin = min(v for _, v, _ in numeric)
-    vmax = max(v for _, v, _ in numeric)
-    if vmax == vmin:
-        pad_v = max(abs(vmax) * 0.01, 1.0)
-        vmin -= pad_v
-        vmax += pad_v
-    n = max(len(rows), 2)
+    baseline = next((v for (_, _, _, v, s) in parsed if s == "baseline"), parsed[0][3])
+    if not baseline:
+        return '<div class="empty">baseline is zero; cannot compute speedup</div>'
 
-    def x(i): return pad + (width - 2 * pad) * i / (n - 1)
-    def y(v): return height - pad - (height - 2 * pad) * (v - vmin) / (vmax - vmin)
+    def speedup(v):
+        if lower_better:
+            return baseline / v if v else None
+        return v / baseline
 
-    # Trajectory of kept changes (baseline + improved rows).
-    kept = [(i, v) for (i, v, s) in numeric if s in ("baseline", "improved")]
+    t0 = min(t for _, _, t, _, _ in parsed)
+    data = []
+    for i, raw_t, t, v, s in parsed:
+        sp = speedup(v)
+        if sp is None:
+            continue
+        data.append((i, raw_t, (t - t0).total_seconds(), v, sp, s))
+    if not data:
+        return '<div class="empty">no numeric data</div>'
+
+    tmin = 0.0
+    tmax = max(dt for _, _, dt, _, _, _ in data)
+    if tmax <= tmin:
+        tmax = tmin + 1.0
+
+    vmin = 0.0
+    vmax = max(sp for _, _, _, _, sp, _ in data)
+    vmax = max(vmax, 1.0)  # keep baseline reference in view
+
+    def x(dt): return pad + (width - 2 * pad) * (dt - tmin) / (tmax - tmin)
+    def y(sp): return height - pad - (height - 2 * pad) * (sp - vmin) / (vmax - vmin)
+
+    kept = [(dt, sp) for (_, _, dt, _, sp, s) in data if s in ("baseline", "improved")]
 
     parts = [f'<svg viewBox="0 0 {width} {height}" class="chart">']
-    # axes
     parts.append(f'<line x1="{pad}" y1="{height - pad}" x2="{width - pad}" y2="{height - pad}" stroke="#333"/>')
     parts.append(f'<line x1="{pad}" y1="{pad}" x2="{pad}" y2="{height - pad}" stroke="#333"/>')
-    # gridlines + y-axis labels (3 ticks)
+    # y gridlines + speedup labels
     for k in range(3):
-        frac = k / 2
-        v = vmin + (vmax - vmin) * frac
-        yv = y(v)
+        sp = vmin + (vmax - vmin) * (k / 2)
+        yv = y(sp)
         parts.append(f'<line x1="{pad}" y1="{yv:.1f}" x2="{width - pad}" y2="{yv:.1f}" stroke="#1f1f1f"/>')
-        parts.append(f'<text x="{pad - 6}" y="{yv + 4:.1f}" text-anchor="end" fill="#888" font-size="11">{v:.4g}</text>')
-    # x-axis label (trial count)
-    parts.append(f'<text x="{width / 2:.0f}" y="{height - 8}" text-anchor="middle" fill="#666" font-size="11">trial</text>')
+        parts.append(f'<text x="{pad - 6}" y="{yv + 4:.1f}" text-anchor="end" fill="#888" font-size="11">{sp:.2f}\u00d7</text>')
+    # x tick labels (walltime since start)
+    for k in range(3):
+        dt = tmin + (tmax - tmin) * (k / 2)
+        xv = x(dt)
+        anchor = "start" if k == 0 else ("end" if k == 2 else "middle")
+        parts.append(f'<text x="{xv:.1f}" y="{height - pad + 14:.1f}" text-anchor="{anchor}" fill="#888" font-size="11">{fmt_duration(dt)}</text>')
+    # dashed reference line at baseline speedup (1.0)
+    yb = y(1.0)
+    parts.append(f'<line x1="{pad}" y1="{yb:.1f}" x2="{width - pad}" y2="{yb:.1f}" stroke="#555" stroke-dasharray="4 4"/>')
+    # x-axis title
+    parts.append(f'<text x="{width / 2:.0f}" y="{height - 6}" text-anchor="middle" fill="#666" font-size="11">walltime since start</text>')
     # kept trajectory line
     if len(kept) >= 2:
-        d = "M " + " L ".join(f"{x(i):.1f},{y(v):.1f}" for i, v in kept)
+        d = "M " + " L ".join(f"{x(dt):.1f},{y(sp):.1f}" for dt, sp in kept)
         parts.append(f'<path d="{d}" fill="none" stroke="#3a8" stroke-width="2"/>')
     # all-trial dots
-    for i, v, s in numeric:
+    for i, raw_t, dt, v, sp, s in data:
         color = STATUS_COLORS.get(s, "#888")
-        parts.append(f'<circle cx="{x(i):.1f}" cy="{y(v):.1f}" r="3.5" fill="{color}"><title>trial {i}: {v:g} ({s})</title></circle>')
+        if raw_t is None:
+            note = " [timestamp missing; pinned to prior trial]"
+        elif (raw_t - t0).total_seconds() < dt - 0.5:
+            raw_iso = raw_t.isoformat(timespec="seconds")
+            note = f" [raw timestamp {raw_iso} clamped]"
+        else:
+            note = ""
+        parts.append(f'<circle cx="{x(dt):.1f}" cy="{y(sp):.1f}" r="3.5" fill="{color}"><title>trial {i}: {sp:.3f}\u00d7 ({v:g}) @ {fmt_duration(dt)} ({s}){note}</title></circle>')
     parts.append("</svg>")
     return "".join(parts)
 
@@ -107,9 +179,31 @@ def render_summary(rows, unit, lower_better):
         delta = -delta
     failures = sum(1 for r in rows if r.get("status", "").endswith("_error"))
 
+    # Trials/hr uses clamped timestamps (see render_chart) so reverse timestamps don't poison the rate.
+    running = None
+    clamped = []
+    for r in rows:
+        raw = parse_timestamp(r)
+        if raw is None:
+            t = running
+        elif running is None:
+            t = raw
+        else:
+            t = raw if raw >= running else running
+        if t is not None:
+            running = t
+        clamped.append(t)
+    usable = [t for t in clamped if t is not None]
+    rate_span = ""
+    if len(rows) >= 2 and len(usable) >= 2:
+        elapsed = (usable[-1] - usable[0]).total_seconds()
+        if elapsed >= 60:
+            rate_span = f'<span><b>{(len(rows) - 1) * 3600 / elapsed:.1f}</b> trials/hr</span>'
+
     return (
         '<div class="summary">'
         f'<span><b>{len(rows)}</b> trials</span>'
+        f'{rate_span}'
         f'<span>baseline <b>{baseline:g}</b> {html.escape(unit)}</span>'
         f'<span>best <b>{best:g}</b> {html.escape(unit)} @ trial {best_i}</span>'
         f'<span class="delta {"pos" if delta >= 0 else "neg"}">{delta:+.2f}%</span>'
@@ -137,22 +231,30 @@ def render_table(rows):
     return "".join(out)
 
 
-def render_section(path: Path):
+def render_section(path: Path, collapsed: bool = False):
+    name = html.escape(path.name)
     try:
         rows = load_log(path)
+        unit = next((r.get("unit", "") for r in rows if r.get("unit")), "")
+        lower_better = is_lower_better(unit)
+        body = (
+            f'<h2>{name}</h2>'
+            f'{render_summary(rows, unit, lower_better)}'
+            f'{render_chart(rows, lower_better)}'
+            f'<details><summary>show {len(rows)} trials</summary>{render_table(rows)}</details>'
+        )
+        count = len(rows)
     except OSError as e:
-        return f'<section><h2>{html.escape(path.name)}</h2><p class="empty">read error: {html.escape(str(e))}</p></section>'
+        body = f'<h2>{name}</h2><p class="empty">read error: {html.escape(str(e))}</p>'
+        count = 0
 
-    unit = next((r.get("unit", "") for r in rows if r.get("unit")), "")
-    lower_better = is_lower_better(unit)
-    return (
-        f'<section>'
-        f'<h2>{html.escape(path.name)}</h2>'
-        f'{render_summary(rows, unit, lower_better)}'
-        f'{render_chart(rows, lower_better)}'
-        f'<details><summary>show {len(rows)} trials</summary>{render_table(rows)}</details>'
-        f'</section>'
-    )
+    if not collapsed:
+        return f'<section data-run="{name}">{body}</section>'
+    summary = f'{name} · {count} trials' if count else name
+    return (f'<details class="run" data-run="{name}">'
+            f'<summary>{summary}</summary>'
+            f'<section>{body}</section>'
+            f'</details>')
 
 
 PAGE = """<!doctype html>
@@ -192,6 +294,14 @@ PAGE = """<!doctype html>
   details summary {{ cursor: pointer; color: #777; font-size: 12px; margin-top: 12px;
                      user-select: none; }}
   details summary:hover {{ color: #aaa; }}
+  details.run {{ margin-bottom: 20px; }}
+  details.run > summary {{ padding: 10px 14px; background: #161616; border: 1px solid #262626;
+                          border-radius: 6px; color: #aaa; font-size: 13px; margin-top: 0;
+                          font-family: ui-monospace, SFMono-Regular, monospace; }}
+  details.run > summary:hover {{ color: #fff; }}
+  details.run[open] > summary {{ border-radius: 6px 6px 0 0; border-bottom: none; }}
+  details.run[open] > section {{ border-radius: 0 0 6px 6px; border-top: none;
+                                  margin-bottom: 0; }}
   .empty {{ color: #666; font-size: 13px; padding: 12px 0; }}
   code {{ background: #222; padding: 1px 5px; border-radius: 3px; font-size: 12px; }}
 </style>
@@ -209,11 +319,10 @@ PAGE = """<!doctype html>
 
   function snapshot(root) {{
     const state = {{}};
-    root.querySelectorAll('section').forEach(sec => {{
-      const h2 = sec.querySelector('h2');
-      if (!h2) return;
-      const key = h2.textContent;
-      sec.querySelectorAll('details').forEach((d, i) => {{
+    root.querySelectorAll('[data-run]').forEach(el => {{
+      const key = el.getAttribute('data-run');
+      if (el.tagName === 'DETAILS') state[key + '|outer'] = el.open;
+      el.querySelectorAll('details').forEach((d, i) => {{
         state[key + '|' + i] = d.open;
       }});
     }});
@@ -221,11 +330,10 @@ PAGE = """<!doctype html>
   }}
 
   function apply(root, state) {{
-    root.querySelectorAll('section').forEach(sec => {{
-      const h2 = sec.querySelector('h2');
-      if (!h2) return;
-      const key = h2.textContent;
-      sec.querySelectorAll('details').forEach((d, i) => {{
+    root.querySelectorAll('[data-run]').forEach(el => {{
+      const key = el.getAttribute('data-run');
+      if (el.tagName === 'DETAILS' && state[key + '|outer']) el.open = true;
+      el.querySelectorAll('details').forEach((d, i) => {{
         if (state[key + '|' + i]) d.open = true;
       }});
     }});
@@ -265,7 +373,7 @@ def render_page(experiments_dir: Path) -> str:
             body = (f'<p class="empty">No <code>*.csv</code> logs in '
                     f'<code>{html.escape(str(experiments_dir))}</code>.</p>')
         else:
-            body = "\n".join(render_section(f) for f in files)
+            body = "\n".join(render_section(f, collapsed=(i > 0)) for i, f in enumerate(files))
     return PAGE.format(root=html.escape(str(experiments_dir)), body=body)
 
 
