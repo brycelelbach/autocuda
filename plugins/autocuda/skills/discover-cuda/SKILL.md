@@ -38,6 +38,39 @@ Once you understand the project, set up the build environment:
 4. **Build.** Compile all targets needed for validation and benchmarking. Note the build commands and any non-obvious flags.
 5. **Run validation.** Execute the test suite or correctness checks. Everything must pass before any optimization begins. If tests fail on the unmodified code, stop and report the issue to the user.
 6. **Run the benchmark.** Execute the benchmark harness. Record the baseline metric value, the unit, and which direction is better. Note how long the benchmark takes — this establishes the timeout for optimization trials.
+7. **Verify the profilers work.** The optimization loop leans heavily on `nsys` and `ncu`, so you must confirm they run in this environment before handing off. Write a minimal hello-world CUDA program outside the project tree (e.g. `/tmp/autocuda-hello.cu`):
+
+   ```cuda
+   #include <cstdio>
+   __global__ void hello() { printf("hello from GPU\n"); }
+   int main() {
+       hello<<<1, 1>>>();
+       cudaDeviceSynchronize();
+       return 0;
+   }
+   ```
+
+   Compile it with `nvcc -O2 /tmp/autocuda-hello.cu -o /tmp/autocuda-hello`, then exercise both profilers:
+
+   ```bash
+   nsys profile --stats=true /tmp/autocuda-hello
+   ncu --set full /tmp/autocuda-hello
+   ```
+
+   Each must produce usable output — an `nsys` report with a non-empty GPU-kernel summary, an `ncu` report with populated metric sections. "No output" or "no kernels were profiled" counts as a failure.
+
+   **Try hard to make this work.** Do not give up after the first error. Common failure modes and remediations, in roughly the order you should try them:
+
+   - `ERR_NVGPUCTRPERM`, "the user does not have permission to profile on the target device", or "access to performance counters is disabled" from `ncu` — re-run under `sudo -E ncu --set full /tmp/autocuda-hello`. Sudo fixes the vast majority of `ncu` failures.
+   - `nsys`/`ncu` "command not found" — they usually live under `/usr/local/cuda*/bin`, `/opt/nvidia/nsight-systems/*/bin`, or `/opt/nvidia/nsight-compute/*/bin`. `find / -name nsys -type f 2>/dev/null` and `find / -name ncu -type f 2>/dev/null` will locate them. Prepend the containing directory to `PATH`, or record the absolute path for later use.
+   - Permission errors writing the profile report — pass `--output /tmp/<name>` and confirm `/tmp` is writable.
+   - `ncu: error while loading shared libraries ...` — set `LD_LIBRARY_PATH` to the toolkit's `lib64` (e.g. `/usr/local/cuda/lib64`), or switch to the `ncu` shipped with the installed driver.
+   - `kernel.perf_event_paranoid` too strict — `sudo sysctl -w kernel.perf_event_paranoid=1` (runtime-only; treat this as another reason the optimize loop will need `sudo`).
+   - Driver profiling disabled via `NVreg_RestrictProfilingToAdminUsers=1` — only root can profile until a reboot with the kernel-module flag flipped, so again: use `sudo`.
+
+   Keep iterating — combine remediations if needed (e.g. `sudo -E` plus `LD_LIBRARY_PATH`) — until both tools produce useful output, or you have genuinely exhausted the list above.
+
+   Record the exact invocation that worked (with any `sudo`, env vars, or absolute paths) so `project-layout.md` can reproduce it. Remove `/tmp/autocuda-hello*` when done.
 
 ## Write project-layout.md
 
@@ -119,6 +152,17 @@ Base these on observed times during discovery, with some margin.
 - GPU model and compute capability.
 - CUDA toolkit version.
 - Any notable environment details (driver version, OS, etc.).
+
+### Profiling
+
+Record whether `nsys` and `ncu` work in this environment, what it took to make them work, and the exact invocations the optimization loop should use. This section is load-bearing — the optimize-cuda skill reads it before every profile.
+
+- **nsys command** — the exact command that produced usable output on the hello-world test program (e.g. `nsys profile --stats=true <cmd>`, or `sudo -E nsys profile --stats=true <cmd>`, or `/usr/local/cuda-12.3/bin/nsys profile --stats=true <cmd>`). Use `<cmd>` as the placeholder for the benchmark command the loop will substitute in. Write `DOES NOT WORK` only if the tool genuinely could not be made to function after trying every remediation in the Environment setup section.
+- **ncu command** — same format. Include any `--target-processes all` or similar flags that were necessary.
+- **Remediations applied** — one short bullet per thing that had to be changed from the defaults to make the profilers work. Examples: "required `sudo -E` for `ncu` (ERR_NVGPUCTRPERM)", "prepended `/usr/local/cuda-12.3/bin` to `PATH`", "exported `LD_LIBRARY_PATH=/usr/local/cuda/lib64`", "`sudo sysctl -w kernel.perf_event_paranoid=1` (does not persist across reboot)". If nothing beyond the defaults was needed, say `None — defaults work`.
+- **Environment variables** — any env vars that must be set for the profilers to run. The optimize loop will export these before each profile invocation.
+
+If only one of the two tools works, record the working one and explain the failure mode for the other. The optimize loop is still expected to profile aggressively with whatever works.
 
 ## Operating rules
 
