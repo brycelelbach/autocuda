@@ -1,18 +1,29 @@
 # autocuda
 
-Autonomous CUDA kernel optimizer - inspired by
+Autonomous CUDA optimizer - inspired by
 [karpathy/autoresearch](https://github.com/karpathy/autoresearch) but targeting
 GPU kernel performance instead of language-model training.
 
-The idea: give an AI agent a simple CUDA kernel and a fixed benchmark harness,
-then let it experiment autonomously. It modifies the kernel, benchmarks it,
-checks if the result improved, keeps or discards, and repeats. You come back to
-a log of trials and (hopefully) a faster kernel.
+The idea: give an agent a CUDA project with a fixed benchmark harness, then let
+it experiment autonomously. It modifies source, validates correctness, benchmarks
+it, checks if the result improved, keeps or discards, and repeats. You come back
+to a log of trials and (hopefully) a faster codebase.
 
 ## How it works
 
-The repo ships several example kernels under `kernels/`, each with its own
-fixed benchmark harness and a naive starter kernel:
+autocuda ships two Claude Code skills:
+
+- **`discover-cuda`** - explores an unfamiliar CUDA project, identifies editable
+  vs read-only files, verifies the build and benchmark run, and writes a
+  `project-layout.md` that pins down the ground truth for the optimization
+  loop.
+- **`optimize-cuda`** - reads `project-layout.md`, then runs the trial loop:
+  modify source, build, validate, benchmark, keep-or-revert, log, repeat.
+  Commits every winning change on an `experiment/<tag>` branch so the history
+  is reviewable.
+
+The repo also ships several example kernels under `kernels/` that can be used
+as targets for the skills:
 
 | Kernel | Description | Key metric |
 |--------|-------------|------------|
@@ -24,36 +35,16 @@ fixed benchmark harness and a naive starter kernel:
 Each kernel directory has two files:
 
 - **`bench.cu`** - fixed [nvbench](https://github.com/NVIDIA/nvbench) harness.
-  Not modified.
-- **`kernel.cuh`** - the single file the agent edits. Contains the kernel
-  template, block size, grid-size computation, and explicit template
-  instantiations. Everything is fair game: vectorisation, memory access
-  patterns, block size, loop structure, type-specific specialisations, etc.
-  **This file is edited and iterated on by the agent.**
-
-The outer loop is driven by:
-
-- **`autocuda.py`** - reads the current kernel and trial
-  history, asks Claude for one improvement, applies it, benchmarks, and keeps or
-  reverts. **This file is not edited by the agent.** Use `--kernel <name>` to
-  select which kernel to optimize.
-
-The optimization target is configurable:
-
-| `--metric` | What is optimized | Unit | Direction |
-|------------|-------------------|------|-----------|
-| `memory-bandwidth` (default) | Global memory bandwidth | GiB/s | Higher is better |
-| `compute-bandwidth` | Throughput (via `add_element_count`) | GFLOP/s | Higher is better |
-| `time` | Mean GPU time | ms | Lower is better |
-
-When the harness produces multiple measurements, `--aggregate` controls how they
-are combined into a single scalar (defaults: `min` for memory-bandwidth, `max` for
-time).
+  Read-only.
+- **`kernel.cuh`** - the file the agent edits. Contains the kernel template,
+  block size, grid-size computation, and explicit template instantiations.
+  Everything is fair game: vectorisation, memory access patterns, block size,
+  loop structure, type-specific specialisations, etc.
 
 ## Quick start
 
-**Requirements:** a single NVIDIA GPU, CMake 3.30+, a CUDA toolkit, Python
-3.10+, and an [Anthropic API key](https://console.anthropic.com/).
+**Requirements:** a single NVIDIA GPU, CMake 3.30+, a CUDA toolkit, and
+[Claude Code](https://docs.anthropic.com/en/docs/claude-code).
 
 ```bash
 # 1. Build all benchmarks
@@ -62,36 +53,18 @@ cmake --build build --parallel
 
 # 2. Run a manual baseline to verify setup
 ./build/bench_memcpy
-
-# 3. Run the autonomous optimizer on a specific kernel
-export ANTHROPIC_API_KEY=sk-ant-...
-python autocuda.py --kernel memcpy --metric memory-bandwidth --trials 30
-python autocuda.py --kernel matmul --metric compute-bandwidth --trials 30
 ```
 
-## Running the agent
+Then open this directory in Claude Code and invoke the skills. Start with
+`discover-cuda` to produce `project-layout.md`, then hand off to `optimize-cuda`
+to run the trial loop.
 
-### Autonomous mode (API loop)
-
-`autocuda.py` drives the full experiment programmatically. Each trial it asks
-Claude for one kernel change, applies it, benchmarks, and keeps or reverts.
+For unattended setup (Claude Code install + skill registration in one shot),
+run `bootstrap.bash`:
 
 ```bash
-python autocuda.py --kernel memcpy  --metric memory-bandwidth --trials 30
-python autocuda.py --kernel matmul  --metric compute-bandwidth --trials 20
-python autocuda.py --kernel sigmoid --metric memory-bandwidth --trials 20
-python autocuda.py --kernel stencil --metric memory-bandwidth --trials 20
+curl -fsSL https://raw.githubusercontent.com/brycelelbach/autocuda/main/bootstrap.bash | bash
 ```
-
-The agent's optimization strategy is defined in
-`prompts/optimize-cuda-kernel-trial.md`.
-
-### Interactive mode (Claude Code / Cursor)
-
-Open this directory in your agent-enabled editor and point it at the
-`optimize-cuda-kernel` skill (`skills/optimize-cuda-kernel/SKILL.md`). The
-skill instructs the agent to run trials autonomously - you can leave it
-running and come back to results.
 
 ## Project structure
 
@@ -101,30 +74,20 @@ kernels/
     bench.cu         - fixed nvbench harness (do not modify)
     kernel.cuh       - kernel source (agent modifies this)
   stencil/           - 5-point heat equation stencil
-    bench.cu
-    kernel.cuh
   matmul/            - dense matrix multiplication
-    bench.cu
-    kernel.cuh
   sigmoid/           - PyTorch-style sigmoid operator
-    bench.cu
-    kernel.cuh
 CMakeLists.txt       - build system (do not modify)
-autocuda.py          - autonomous API-loop driver (--kernel selects workload)
-results.csv          - trial log (written by agent / script)
 
 skills/
-  optimize-cuda-kernel/
-    SKILL.md         - skill: autonomous experiment (runs trials in a loop)
-prompts/
-  optimize-cuda-kernel-trial.md      - prompt: generate one kernel optimization trial
-  optimize-cuda-kernel-decision.md   - prompt: accept/reject a proposed kernel change
+  discover-cuda/     - discover project structure, produce project-layout.md
+  optimize-cuda/     - run the autonomous optimization trial loop
 ```
 
 ## Design choices
 
-- **Single file to modify.** The agent only touches `kernel.cuh` for the
-  selected workload. This keeps scope manageable and diffs reviewable.
+- **Discovery then optimization.** A separate discovery pass produces the
+  ground-truth file (`project-layout.md`), so the optimization loop doesn't
+  have to re-derive project structure on every run.
 - **Fixed benchmark harness.** `bench.cu` and `CMakeLists.txt` are never
   modified. The benchmark is the ground truth - consistent and reproducible.
 - **Multiple kernels.** The repo ships several example workloads (memcpy,
@@ -132,5 +95,5 @@ prompts/
   across different problem types.
 - **Multiple benchmark states.** Each harness can sweep across types, sizes, or
   other axes. This forces the agent to find optimizations that generalise.
-- **Self-contained.** One GPU, one kernel file, one metric. No distributed
+- **Self-contained.** One GPU, one repo, one metric at a time. No distributed
   builds, no complex configs.
