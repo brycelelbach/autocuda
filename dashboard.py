@@ -6,7 +6,7 @@ HTML page on http://localhost:8000/. Stdlib only, no dependencies.
 
 The page auto-refreshes so you can leave it open while the optimizer runs.
 
-Consumes the multi-benchmark log schema produced by the optimize-cuda
+Consumes the multi-benchmark log schema produced by the autocuda:optimize
 skill: ``timestamp,benchmark,metric_value,unit,status,description``.
 Rows with ``benchmark=_all_`` are non-benchmark-specific markers
 (compactions, validation/build/runtime errors that aborted the whole

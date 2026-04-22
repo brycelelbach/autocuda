@@ -55,7 +55,7 @@ def parse_args():
         "--harness",
         type=str,
         default=None,
-        help="Harness name to show in subtitle (e.g. 'optimize-cuda')",
+        help="Harness name to show in subtitle (e.g. 'autocuda:optimize')",
     )
     p.add_argument(
         "--model",

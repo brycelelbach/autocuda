@@ -7,7 +7,7 @@
     {
       "name": "autocuda",
       "source": "./plugins/autocuda",
-      "description": "Autonomous CUDA optimization via discover-cuda + optimize-cuda skills"
+      "description": "Autonomous CUDA optimization via autocuda:discover + autocuda:optimize skills"
     }
   ]
 }

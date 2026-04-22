@@ -6,11 +6,10 @@
 #   2. Writes ~/.claude/settings.json with the unattended-mode defaults
 #      (bypass permissions, sandboxed, max effort, opus-4-7) and appends
 #      PATH / alias / env exports to ~/.bashrc.
-#   3. Symlinks each skill under plugins/autocuda/skills/ into
-#      ~/.claude/skills/ so Claude Code picks them up as user-scope skills.
-#      (Equivalent to `/plugin marketplace add brycelelbach/autocuda` +
-#      `/plugin install autocuda@brycelelbach-autocuda`, but runs without a
-#      Claude Code session.)
+#   3. Registers the autocuda marketplace and installs the autocuda plugin
+#      at user scope via `claude plugin marketplace add` + `claude plugin
+#      install`, so the skills are invocable as `/autocuda:discover` and
+#      `/autocuda:optimize`.
 #
 # Can be run from a local checkout or piped via `curl ... | bash`. In the
 # piped case, the repo is cloned into ~/autocuda (override with AUTOCUDA_DIR).
@@ -21,11 +20,12 @@ set -euo pipefail
 
 REPO_URL="https://github.com/brycelelbach/autocuda.git"
 CLAUDE_DIR="${HOME}/.claude"
-SKILLS_DIR="${CLAUDE_DIR}/skills"
 SETTINGS_FILE="${CLAUDE_DIR}/settings.json"
 BASHRC="${HOME}/.bashrc"
 BASHRC_MARKER_BEGIN="# >>> autocuda bootstrap >>>"
 BASHRC_MARKER_END="# <<< autocuda bootstrap <<<"
+MARKETPLACE_NAME="brycelelbach-autocuda"
+PLUGIN_REF="autocuda@${MARKETPLACE_NAME}"
 
 log() { printf '[bootstrap] %s\n' "$*"; }
 
@@ -62,6 +62,23 @@ install_claude() {
     fi
     log "installing Claude Code via native installer..."
     curl -fsSL https://claude.ai/install.sh | bash
+}
+
+# Make `claude` callable from this script even if install_claude just dropped
+# it under ~/.local/bin/ (which isn't on PATH of the invoking shell until the
+# bashrc block takes effect in a future session).
+ensure_claude_on_path() {
+    if command -v claude >/dev/null 2>&1; then
+        return
+    fi
+    if [[ -x "${HOME}/.local/bin/claude" ]]; then
+        export PATH="${HOME}/.local/bin:${PATH}"
+        log "added ${HOME}/.local/bin to PATH for this script"
+    fi
+    if ! command -v claude >/dev/null 2>&1; then
+        log "ERROR: claude still not on PATH after install"
+        exit 1
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -118,33 +135,24 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# 3. Symlink the autocuda plugin's skills into ~/.claude/skills/.
+# 3. Register the marketplace and install the autocuda plugin.
 # ---------------------------------------------------------------------------
-link_skills() {
-    mkdir -p "${SKILLS_DIR}"
-    local plugin_skills_dir="${REPO_DIR}/plugins/autocuda/skills"
-    if [[ ! -d "${plugin_skills_dir}" ]]; then
-        log "warning: no plugin skills dir at ${plugin_skills_dir}"
-        return
+install_plugin() {
+    # write_settings clobbers settings.json each run, so marketplace / plugin
+    # state is always fresh by the time we get here. Still, guard explicitly
+    # in case a future refactor makes write_settings non-clobbering.
+    if claude plugin marketplace list 2>/dev/null | grep -qE "^[[:space:]]*[^[:space:]]+[[:space:]]+${MARKETPLACE_NAME}\$"; then
+        log "marketplace ${MARKETPLACE_NAME} already registered"
+    else
+        log "registering marketplace at ${REPO_DIR} (name: ${MARKETPLACE_NAME})"
+        claude plugin marketplace add "${REPO_DIR}"
     fi
-    local src
-    local count=0
-    shopt -s nullglob
-    for src in "${plugin_skills_dir}"/*/; do
-        src="${src%/}"
-        local name
-        name="$(basename "${src}")"
-        local dest="${SKILLS_DIR}/${name}"
-        if [[ -L "${dest}" || -e "${dest}" ]]; then
-            rm -rf "${dest}"
-        fi
-        ln -s "${src}" "${dest}"
-        log "linked skill: ${dest} -> ${src}"
-        count=$((count + 1))
-    done
-    shopt -u nullglob
-    if [[ "${count}" -eq 0 ]]; then
-        log "warning: no skills found under ${plugin_skills_dir}"
+
+    if claude plugin list 2>/dev/null | grep -qF "${PLUGIN_REF}"; then
+        log "plugin ${PLUGIN_REF} already installed"
+    else
+        log "installing plugin ${PLUGIN_REF} at user scope"
+        claude plugin install "${PLUGIN_REF}"
     fi
 }
 
@@ -153,8 +161,9 @@ main() {
     install_claude
     write_settings
     update_bashrc
-    link_skills
-    log "done. Open a new shell (or 'source ~/.bashrc') so the PATH / alias take effect."
+    ensure_claude_on_path
+    install_plugin
+    log "done. Open Claude Code and invoke /autocuda:discover and /autocuda:optimize."
 }
 
 main "$@"

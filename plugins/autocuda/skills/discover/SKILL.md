@@ -1,11 +1,11 @@
 ---
-name: discover-cuda
+name: discover
 description: >-
   Discover the structure of a CUDA project: locate source files, validation
   code, benchmarks, and build system. Set up the environment, verify
   everything builds and runs, and write a project-layout.md that the
-  optimize-cuda skill consumes. Use when starting work on a new or unfamiliar
-  CUDA project.
+  autocuda:optimize skill consumes. Use when starting work on a new or
+  unfamiliar CUDA project.
 ---
 
 # Discover CUDA Project
@@ -74,7 +74,7 @@ Once you understand the project, set up the build environment:
 
 ## Write project-layout.md
 
-After successful discovery and verification, write a `project-layout.md` file in the repository root. This file is consumed by the `optimize-cuda` skill and must contain all the information needed to run the optimization loop without further discovery.
+After successful discovery and verification, write a `project-layout.md` file in the repository root. This file is consumed by the `autocuda:optimize` skill and must contain all the information needed to run the optimization loop without further discovery.
 
 The file must have the following sections:
 
@@ -98,8 +98,8 @@ Exact command(s) to run correctness checks. Describe what a passing run looks li
 
 List **every** benchmark you find — not just the one that looks most important.
 A project commonly has more than one (e.g. one benchmark per kernel, or a suite
-harness alongside a microbench). `optimize-cuda` needs to know about all of
-them so the user can target some or all.
+harness alongside a microbench). `autocuda:optimize` needs to know about all
+of them so the user can target some or all.
 
 For each benchmark, give its own subsection named after the benchmark itself
 (e.g. `#### bench_matmul`), with every one of the following fields:
@@ -155,7 +155,7 @@ Base these on observed times during discovery, with some margin.
 
 ### Profiling
 
-Record whether `nsys` and `ncu` work in this environment, what it took to make them work, and the exact invocations the optimization loop should use. This section is load-bearing — the optimize-cuda skill reads it before every profile.
+Record whether `nsys` and `ncu` work in this environment, what it took to make them work, and the exact invocations the optimization loop should use. This section is load-bearing — the `autocuda:optimize` skill reads it before every profile.
 
 - **nsys command** — the exact command that produced usable output on the hello-world test program (e.g. `nsys profile --stats=true <cmd>`, or `sudo -E nsys profile --stats=true <cmd>`, or `/usr/local/cuda-12.3/bin/nsys profile --stats=true <cmd>`). Use `<cmd>` as the placeholder for the benchmark command the loop will substitute in. Write `DOES NOT WORK` only if the tool genuinely could not be made to function after trying every remediation in the Environment setup section.
 - **ncu command** — same format. Include any `--target-processes all` or similar flags that were necessary.

@@ -1,11 +1,11 @@
 ---
-name: optimize-cuda
+name: optimize
 description: >-
   Run an autonomous CUDA optimization experiment. Iteratively modifies source
   files, validates correctness, benchmarks performance, and keeps or discards
   changes based on measured results. Requires a project-layout.md (produced
-  by the discover-cuda skill) that describes the project structure. Use when
-  the user wants to optimize CUDA code for performance.
+  by the autocuda:discover skill) that describes the project structure. Use
+  when the user wants to optimize CUDA code for performance.
 ---
 
 # CUDA Optimization Experiment
@@ -18,7 +18,7 @@ you** — the trial loop has no internal termination condition.
 ## Prerequisites
 
 This skill requires a `project-layout.md` file in the repository root. If one
-does not exist, run the `discover-cuda` skill first.
+does not exist, run the `autocuda:discover` skill first.
 
 Read `project-layout.md` before doing anything else. It tells you:
 
@@ -121,7 +121,7 @@ A few trials to tune block sizes, unroll factors, or other magic constants is fi
 
 **Profile aggressively.** A single profile run that exposes the real bottleneck is worth ten blind trials. Cheap speculation about what limits performance burns more context than profiling ever will. Profile whenever you are about to form a new hypothesis, whenever a trial surprises you (big swing in either direction), and whenever a run of ~3 trials has stopped making progress. If you have not profiled in the last ~5 trials, profile now before proposing another change. Treat `nsys` and `ncu` as primary tools, not last resorts.
 
-**Start with the commands from `project-layout.md`.** The discover-cuda skill verified `nsys` and `ncu` against a hello-world program during discovery and recorded the exact invocations (including any `sudo`, env vars, or absolute paths) in the **Profiling** section of `project-layout.md`. Use those verbatim — substitute the benchmark command into the `<cmd>` placeholder. The defaults below are a fallback only; the layout file takes precedence.
+**Start with the commands from `project-layout.md`.** The `autocuda:discover` skill verified `nsys` and `ncu` against a hello-world program during discovery and recorded the exact invocations (including any `sudo`, env vars, or absolute paths) in the **Profiling** section of `project-layout.md`. Use those verbatim — substitute the benchmark command into the `<cmd>` placeholder. The defaults below are a fallback only; the layout file takes precedence.
 
 **Nsight Systems (nsys)** — use for system-level analysis: kernel launch overhead, host-device synchronization, memory transfers, API call timing, multi-stream concurrency, and overall timeline. Start here to understand where time is spent at a high level.
 
@@ -152,7 +152,7 @@ sudo -E ncu --set full <benchmark_command>
 sudo -E nsys profile --stats=true <benchmark_command>
 ```
 
-See [NVIDIA's ERR_NVGPUCTRPERM guide](https://developer.nvidia.com/ERR_NVGPUCTRPERM) for background. Never abandon profiling just because the tool reported an error on the first try — `sudo` almost always resolves it. If sudo also fails, try the remediations in the discover-cuda skill (adjusting `PATH`, `LD_LIBRARY_PATH`, `kernel.perf_event_paranoid`, etc.) before giving up, and update `project-layout.md`'s Profiling section with whatever finally worked so subsequent trials don't repeat the troubleshooting.
+See [NVIDIA's ERR_NVGPUCTRPERM guide](https://developer.nvidia.com/ERR_NVGPUCTRPERM) for background. Never abandon profiling just because the tool reported an error on the first try — `sudo` almost always resolves it. If sudo also fails, try the remediations in the `autocuda:discover` skill (adjusting `PATH`, `LD_LIBRARY_PATH`, `kernel.perf_event_paranoid`, etc.) before giving up, and update `project-layout.md`'s Profiling section with whatever finally worked so subsequent trials don't repeat the troubleshooting.
 
 ### When you're stuck
 
