@@ -34,7 +34,8 @@ Read `project-layout.md` before doing anything else. It tells you:
 4. **Read the editable source files** listed in `project-layout.md`.
 5. **Build, validate, and benchmark.** Run the commands from `project-layout.md` to verify everything works. This establishes the baseline.
 6. **Initialize the trial log** at `experiments/<tag>-log.csv` (creating `experiments/` if needed) with the header row (`timestamp,metric_value,unit,status,description`) and a baseline entry from step 5. Get the timestamp with `date -u +%Y-%m-%dT%H:%M:%S` — never fabricate it.
-7. **Start the trial loop.**
+7. **Lock in the log schema.** The baseline row you just wrote is the schema contract for the rest of the run. Everything chosen in it — the unit string (e.g. `SPS` vs `M_SPS`, `GiB/s` vs `GB/s`), the decimal precision of `metric_value`, and any description convention you intend to use (e.g. a `Trial N:` prefix) — is now canonical. Every subsequent row must match, and must keep matching across compactions. Do not "clean up" or re-format the schema mid-run.
+8. **Start the trial loop.**
 
 ## Optimization strategy
 
@@ -133,7 +134,7 @@ Do not read prior-run logs, prior source variants (e.g. `experimental/*_opt*.cu`
 
 Then, LOOP FOREVER:
 
-1. Re-read the editable source files and `experiments/<tag>-log.csv`.
+1. Re-read the editable source files and `experiments/<tag>-log.csv`. When re-reading the log, inspect the **first** (baseline) row and the **last** row: they define the schema (unit string, metric precision, description convention) that every row you write must match verbatim. This is especially important after a compaction, where the in-context memory of the schema is gone.
 2. Choose one optimization to try. Follow the hypothesis-driven approach above.
 3. Edit the source file(s).
 4. Build. If the build fails, see **Handling failures** below.
@@ -158,10 +159,10 @@ timestamp,metric_value,unit,status,description
 ```
 
 1. the current UTC time as an ISO 8601 timestamp (e.g. `2026-04-05T14:32:01`). **This field is mandatory and MUST be obtained from a Bash call to `date -u +%Y-%m-%dT%H:%M:%S` in the same turn as the log append.** Never invent, estimate, round, copy from an earlier turn, or leave this field blank. A run of trials with wrong-ordered or missing timestamps destroys the ability to reconstruct what happened when, which is the log's main purpose.
-2. metric value achieved (e.g. `487.3412`) — use `N/A` for failures
-3. unit (e.g. `GiB/s`, `ms`, `GFLOP/s`)
-4. status: `baseline`, `improved`, `regressed`, `build_error`, `validation_error`, or `runtime_error`
-5. short text description of what this trial tried
+2. metric value achieved (e.g. `487.3412`) — use `N/A` for failures and compaction markers. Precision and scale must match the baseline row.
+3. unit (e.g. `GiB/s`, `ms`, `GFLOP/s`) — must match the baseline row exactly; do not switch between `SPS` and `M_SPS`, `GB/s` and `GiB/s`, etc. mid-run.
+4. status: `baseline`, `improved`, `regressed`, `build_error`, `validation_error`, `runtime_error`, or `compaction` (see **Handling compactions** below)
+5. short text description of what this trial tried. If the baseline row established a `Trial N:` prefix convention, keep using it; if it did not, do not introduce it partway through.
 
 The canonical append pattern is two Bash calls: one to fetch the timestamp, then one to append the row. Do not collapse these into a single call that embeds a hand-written date string.
 
@@ -174,6 +175,8 @@ timestamp,metric_value,unit,status,description
 2026-04-05T14:11:03,301.0000,GiB/s,regressed,shared memory tiling
 2026-04-05T14:15:22,N/A,GiB/s,validation_error,loop unrolling broke edge case
 2026-04-05T14:12:58,N/A,GiB/s,build_error,"template specialisation (compile error)"
+2026-04-05T14:30:00,N/A,GiB/s,compaction,context compaction; last trial was float4 vectorised loads
+2026-04-05T14:31:45,348.1200,GiB/s,regressed,async memcpy prefetch
 ```
 
 ### Handling failures
@@ -187,6 +190,26 @@ Failure types:
 - **`build_error`** — compilation or linking failure. Revert, log, move on (or fix if trivial).
 - **`validation_error`** — the code compiles and runs but produces incorrect results. This is serious — revert immediately. Never keep a change that breaks correctness.
 - **`runtime_error`** — crash, hang, or timeout during benchmarking. Revert, log, move on.
+
+### Handling compactions
+
+Long runs will hit automatic context compactions. A compaction rewrites your
+conversation into a summary; stylistic context that wasn't load-bearing in
+the summary (log schema, description conventions, trial numbering) can drift
+unless you actively re-anchor to the log file.
+
+On any turn where you notice that a compaction has occurred since your last
+action — typically signalled by a conversation-continuation summary, a
+dramatic drop in what you recall about recent trials, or the system telling
+you so — the very first action is:
+
+1. `cat` or `Read` the first few and last ~20 rows of `experiments/<tag>-log.csv`. The baseline row and the most recent rows define the schema you must continue to match verbatim (unit string, metric precision, `Trial N:` convention or lack thereof).
+2. Identify the next trial number from the last `Trial N:` row if that convention is in use.
+3. Append a `compaction` marker row to the log before running any trial. Fetch the timestamp with a fresh `date -u +%Y-%m-%dT%H:%M:%S` call, use `N/A` for `metric_value`, keep the established `unit` string, set the status to `compaction`, and describe what got summarised (e.g. `context compaction; last trial was N`). This row preserves the boundary between pre- and post-compaction work in the audit trail.
+4. Only then resume the trial loop.
+
+Do NOT use a compaction as an opportunity to "improve" the log format. The
+format established by the baseline row is the contract for the entire run.
 
 ## Operating rules
 
