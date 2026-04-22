@@ -5,6 +5,12 @@ Reads `*-log.csv` files from ./experiments/ and serves them as a single
 HTML page on http://localhost:8000/. Stdlib only, no dependencies.
 
 The page auto-refreshes so you can leave it open while the optimizer runs.
+
+Consumes the multi-benchmark log schema produced by the optimize-cuda
+skill: ``timestamp,benchmark,metric_value,unit,status,description``.
+Rows with ``benchmark=_all_`` are non-benchmark-specific markers
+(compactions, validation/build/runtime errors that aborted the whole
+trial) and do not appear in the overlay chart.
 """
 
 import argparse
@@ -22,9 +28,20 @@ STATUS_COLORS = {
     "build_error":      "#c33",
     "validation_error": "#c33",
     "runtime_error":    "#c33",
+    "compaction":       "#557",
 }
 
-LOWER_IS_BETTER_UNITS = {"ms", "s", "us", "ns", "\u00b5s", "sec", "seconds"}
+LOWER_IS_BETTER_UNITS = {"ms", "s", "us", "ns", "µs", "sec", "seconds"}
+
+# Palette for per-benchmark chart lines. Cycles if there are more benchmarks.
+BENCHMARK_COLORS = [
+    "#3a8", "#e6a23c", "#9966ff", "#ef476f",
+    "#14b8a6", "#f59e0b", "#6366f1", "#f472b6",
+]
+
+# Sentinel value used in the `benchmark` column for rows that don't belong to
+# one specific benchmark (compactions, whole-trial failures).
+SENTINEL = "_all_"
 
 
 def is_lower_better(unit: str) -> bool:
@@ -64,15 +81,17 @@ def fmt_duration(sec: float) -> str:
     return f"{h}h{m:02d}m" if m else f"{h}h"
 
 
-def render_chart(rows, lower_better, width=900, height=260, pad=44):
-    # CSV row order is the true trial order. Clamp each timestamp to the
-    # running max so backward or missing timestamps don't distort the x-axis.
+def parse_rows(rows):
+    """Parse rows, clamping timestamps monotonically across the full sequence.
+
+    Returns a list of dicts with: idx, benchmark, metric, raw_t, t, status,
+    unit, description, timestamp_str, metric_str. Clamping is done across the
+    whole CSV (not per-benchmark) so the x-axis stays consistent when a single
+    trial writes interleaved benchmark rows.
+    """
     parsed = []
     running_max = None
     for i, r in enumerate(rows):
-        v = parse_metric(r)
-        if v is None:
-            continue
         raw_t = parse_timestamp(r)
         if raw_t is None:
             t = running_max
@@ -80,152 +99,256 @@ def render_chart(rows, lower_better, width=900, height=260, pad=44):
             t = raw_t
         else:
             t = raw_t if raw_t >= running_max else running_max
-        if t is None:
+        if t is not None:
+            running_max = t
+        parsed.append({
+            "idx": i,
+            "raw_t": raw_t,
+            "t": t,
+            "benchmark": (r.get("benchmark") or "").strip(),
+            "metric": parse_metric(r),
+            "unit": r.get("unit", "") or "",
+            "status": r.get("status", "") or "",
+            "description": r.get("description", "") or "",
+            "timestamp_str": r.get("timestamp", "") or "",
+            "metric_str": r.get("metric_value", "") or "",
+        })
+    return parsed
+
+
+def group_by_benchmark(parsed):
+    """Return (ordered dict bm -> rows, list of sentinel rows).
+
+    Insertion order of the dict reflects first-appearance order of each
+    benchmark in the log, so chart colors stay stable across refreshes.
+    """
+    by_bm = {}
+    sentinels = []
+    for p in parsed:
+        bm = p["benchmark"]
+        if not bm or bm == SENTINEL:
+            sentinels.append(p)
+        else:
+            by_bm.setdefault(bm, []).append(p)
+    return by_bm, sentinels
+
+
+def benchmark_unit(bm_rows):
+    return next((p["unit"] for p in bm_rows if p["unit"]), "")
+
+
+def benchmark_baseline(bm_rows):
+    for p in bm_rows:
+        if p["status"] == "baseline" and p["metric"] is not None:
+            return p["metric"]
+    for p in bm_rows:
+        if p["metric"] is not None:
+            return p["metric"]
+    return None
+
+
+def compute_speedup(metric, baseline, lower_better):
+    if metric is None or baseline is None or not baseline:
+        return None
+    if lower_better:
+        if not metric:
+            return None
+        return baseline / metric
+    return metric / baseline
+
+
+def render_chart(by_bm, width=900, height=280, pad=52):
+    """Overlay chart: one speedup curve per benchmark, shared x (walltime) and
+    y (speedup vs that benchmark's own baseline, so every benchmark's 1.0
+    coincides with the dashed reference line)."""
+    series = []
+    for idx, (bm, rows) in enumerate(by_bm.items()):
+        unit = benchmark_unit(rows)
+        lower = is_lower_better(unit)
+        baseline = benchmark_baseline(rows)
+        if baseline is None:
             continue
-        running_max = t
-        parsed.append((i, raw_t, t, v, r.get("status", "")))
-    if not parsed:
+        pts = []
+        for p in rows:
+            if p["metric"] is None or p["t"] is None:
+                continue
+            sp = compute_speedup(p["metric"], baseline, lower)
+            if sp is None:
+                continue
+            pts.append({**p, "speedup": sp})
+        if pts:
+            series.append({
+                "benchmark": bm,
+                "unit": unit,
+                "baseline": baseline,
+                "lower": lower,
+                "points": pts,
+                "color": BENCHMARK_COLORS[idx % len(BENCHMARK_COLORS)],
+            })
+
+    if not series:
         return '<div class="empty">no numeric data</div>'
 
-    baseline = next((v for (_, _, _, v, s) in parsed if s == "baseline"), parsed[0][3])
-    if not baseline:
-        return '<div class="empty">baseline is zero; cannot compute speedup</div>'
+    all_pts = [q for s in series for q in s["points"]]
+    t0 = min(q["t"] for q in all_pts)
+    tmax = max((q["t"] - t0).total_seconds() for q in all_pts)
+    if tmax <= 0:
+        tmax = 1.0
 
-    def speedup(v):
-        if lower_better:
-            return baseline / v if v else None
-        return v / baseline
-
-    t0 = min(t for _, _, t, _, _ in parsed)
-    data = []
-    for i, raw_t, t, v, s in parsed:
-        sp = speedup(v)
-        if sp is None:
-            continue
-        data.append((i, raw_t, (t - t0).total_seconds(), v, sp, s))
-    if not data:
-        return '<div class="empty">no numeric data</div>'
-
-    tmin = 0.0
-    tmax = max(dt for _, _, dt, _, _, _ in data)
-    if tmax <= tmin:
-        tmax = tmin + 1.0
-
+    vmax = max(q["speedup"] for q in all_pts)
+    vmax = max(vmax, 1.0)  # keep baseline in view
     vmin = 0.0
-    vmax = max(sp for _, _, _, _, sp, _ in data)
-    vmax = max(vmax, 1.0)  # keep baseline reference in view
 
-    def x(dt): return pad + (width - 2 * pad) * (dt - tmin) / (tmax - tmin)
+    def x(dt): return pad + (width - 2 * pad) * dt / tmax
     def y(sp): return height - pad - (height - 2 * pad) * (sp - vmin) / (vmax - vmin)
-
-    kept = [(dt, sp) for (_, _, dt, _, sp, s) in data if s in ("baseline", "improved")]
 
     parts = [f'<svg viewBox="0 0 {width} {height}" class="chart">']
     parts.append(f'<line x1="{pad}" y1="{height - pad}" x2="{width - pad}" y2="{height - pad}" stroke="#333"/>')
     parts.append(f'<line x1="{pad}" y1="{pad}" x2="{pad}" y2="{height - pad}" stroke="#333"/>')
-    # y gridlines + speedup labels
     for k in range(3):
         sp = vmin + (vmax - vmin) * (k / 2)
         yv = y(sp)
         parts.append(f'<line x1="{pad}" y1="{yv:.1f}" x2="{width - pad}" y2="{yv:.1f}" stroke="#1f1f1f"/>')
-        parts.append(f'<text x="{pad - 6}" y="{yv + 4:.1f}" text-anchor="end" fill="#888" font-size="11">{sp:.2f}\u00d7</text>')
-    # x tick labels (walltime since start)
+        parts.append(f'<text x="{pad - 6}" y="{yv + 4:.1f}" text-anchor="end" fill="#888" font-size="11">{sp:.2f}×</text>')
     for k in range(3):
-        dt = tmin + (tmax - tmin) * (k / 2)
+        dt = tmax * (k / 2)
         xv = x(dt)
         anchor = "start" if k == 0 else ("end" if k == 2 else "middle")
         parts.append(f'<text x="{xv:.1f}" y="{height - pad + 14:.1f}" text-anchor="{anchor}" fill="#888" font-size="11">{fmt_duration(dt)}</text>')
-    # dashed reference line at baseline speedup (1.0)
     yb = y(1.0)
     parts.append(f'<line x1="{pad}" y1="{yb:.1f}" x2="{width - pad}" y2="{yb:.1f}" stroke="#555" stroke-dasharray="4 4"/>')
-    # x-axis title
     parts.append(f'<text x="{width / 2:.0f}" y="{height - 6}" text-anchor="middle" fill="#666" font-size="11">walltime since start</text>')
-    # kept trajectory line
-    if len(kept) >= 2:
-        d = "M " + " L ".join(f"{x(dt):.1f},{y(sp):.1f}" for dt, sp in kept)
-        parts.append(f'<path d="{d}" fill="none" stroke="#3a8" stroke-width="2"/>')
-    # all-trial dots
-    for i, raw_t, dt, v, sp, s in data:
-        color = STATUS_COLORS.get(s, "#888")
-        if raw_t is None:
-            note = " [timestamp missing; pinned to prior trial]"
-        elif (raw_t - t0).total_seconds() < dt - 0.5:
-            raw_iso = raw_t.isoformat(timespec="seconds")
-            note = f" [raw timestamp {raw_iso} clamped]"
-        else:
-            note = ""
-        parts.append(f'<circle cx="{x(dt):.1f}" cy="{y(sp):.1f}" r="3.5" fill="{color}"><title>trial {i}: {sp:.3f}\u00d7 ({v:g}) @ {fmt_duration(dt)} ({s}){note}</title></circle>')
+
+    for s in series:
+        color = s["color"]
+        bm_esc = html.escape(s["benchmark"])
+        unit_esc = html.escape(s["unit"])
+        kept = [q for q in s["points"] if q["status"] in ("baseline", "improved")]
+        if len(kept) >= 2:
+            d = "M " + " L ".join(
+                f"{x((q['t'] - t0).total_seconds()):.1f},{y(q['speedup']):.1f}"
+                for q in kept
+            )
+            parts.append(f'<path d="{d}" fill="none" stroke="{color}" stroke-width="2" opacity="0.85"/>')
+        for q in s["points"]:
+            dot_fill = STATUS_COLORS.get(q["status"], color)
+            dt = (q["t"] - t0).total_seconds()
+            if q["raw_t"] is None:
+                note = " [timestamp missing; pinned to prior trial]"
+            elif (q["raw_t"] - t0).total_seconds() < dt - 0.5:
+                note = f" [raw timestamp {q['raw_t'].isoformat(timespec='seconds')} clamped]"
+            else:
+                note = ""
+            parts.append(
+                f'<circle cx="{x(dt):.1f}" cy="{y(q["speedup"]):.1f}" r="3.5"'
+                f' fill="{dot_fill}" stroke="{color}" stroke-width="1.5">'
+                f'<title>{bm_esc} row {q["idx"]}: {q["speedup"]:.3f}× ({q["metric"]:g} {unit_esc})'
+                f' @ {fmt_duration(dt)} ({q["status"]}){note}</title>'
+                f'</circle>'
+            )
+
     parts.append("</svg>")
-    return "".join(parts)
 
-
-def render_summary(rows, unit, lower_better):
-    if not rows:
-        return ""
-    metrics = [(i, parse_metric(r), r.get("status", "")) for i, r in enumerate(rows)]
-    numeric = [(i, v, s) for (i, v, s) in metrics if v is not None]
-    if not numeric:
-        return f'<div class="summary">{len(rows)} trials · no numeric data</div>'
-
-    baseline = next((v for (_, v, s) in numeric if s == "baseline"), numeric[0][1])
-    kept = [(i, v) for (i, v, s) in numeric if s in ("baseline", "improved")]
-    if kept:
-        best_i, best = (min(kept, key=lambda x: x[1]) if lower_better
-                        else max(kept, key=lambda x: x[1]))
-    else:
-        best_i, best = numeric[0][0], numeric[0][1]
-    delta = (best - baseline) / baseline * 100 if baseline else 0
-    if lower_better:
-        delta = -delta
-    failures = sum(1 for r in rows if r.get("status", "").endswith("_error"))
-
-    # Trials/hr uses clamped timestamps (see render_chart) so reverse timestamps don't poison the rate.
-    running = None
-    clamped = []
-    for r in rows:
-        raw = parse_timestamp(r)
-        if raw is None:
-            t = running
-        elif running is None:
-            t = raw
-        else:
-            t = raw if raw >= running else running
-        if t is not None:
-            running = t
-        clamped.append(t)
-    usable = [t for t in clamped if t is not None]
-    rate_span = ""
-    if len(rows) >= 2 and len(usable) >= 2:
-        elapsed = (usable[-1] - usable[0]).total_seconds()
-        if elapsed >= 60:
-            rate_span = f'<span><b>{(len(rows) - 1) * 3600 / elapsed:.1f}</b> trials/hr</span>'
-
-    return (
-        '<div class="summary">'
-        f'<span><b>{len(rows)}</b> trials</span>'
-        f'{rate_span}'
-        f'<span>baseline <b>{baseline:g}</b> {html.escape(unit)}</span>'
-        f'<span>best <b>{best:g}</b> {html.escape(unit)} @ trial {best_i}</span>'
-        f'<span class="delta {"pos" if delta >= 0 else "neg"}">{delta:+.2f}%</span>'
-        f'<span class="muted">{failures} failures</span>'
-        '</div>'
+    legend_items = "".join(
+        f'<span class="legend-item">'
+        f'<span class="legend-swatch" style="background:{s["color"]}"></span>'
+        f'{html.escape(s["benchmark"])}'
+        f'<span class="legend-unit">{html.escape(s["unit"])}</span>'
+        f'</span>'
+        for s in series
     )
+    return "".join(parts) + f'<div class="legend">{legend_items}</div>'
+
+
+def render_summary(parsed, by_bm, sentinels):
+    """Global run-level summary plus a per-benchmark line for baseline/best/delta."""
+    # Distinct timestamps (excluding compactions) ≈ number of trials.
+    trial_ts = {
+        p["timestamp_str"]
+        for p in parsed
+        if p["status"] != "compaction" and p["timestamp_str"]
+    }
+    n_trials = len(trial_ts)
+    n_benchmarks = len(by_bm)
+
+    failed_trial_ts = {
+        p["timestamp_str"]
+        for p in parsed
+        if p["status"].endswith("_error") and p["timestamp_str"]
+    }
+    n_failures = len(failed_trial_ts)
+
+    usable_ts = [p["t"] for p in parsed if p["t"] is not None]
+    rate_span = ""
+    if len(usable_ts) >= 2 and n_trials >= 2:
+        elapsed = (max(usable_ts) - min(usable_ts)).total_seconds()
+        if elapsed >= 60:
+            rate_span = f'<span><b>{(n_trials - 1) * 3600 / elapsed:.1f}</b> trials/hr</span>'
+
+    bench_label = "benchmark" if n_benchmarks == 1 else "benchmarks"
+    global_bits = [
+        f'<span><b>{n_trials}</b> trials</span>',
+        f'<span><b>{n_benchmarks}</b> {bench_label}</span>',
+    ]
+    if rate_span:
+        global_bits.append(rate_span)
+    if n_failures:
+        global_bits.append(f'<span class="muted">{n_failures} failures</span>')
+    global_summary = f'<div class="summary">{"".join(global_bits)}</div>'
+
+    bench_rows = []
+    for bm, rows in by_bm.items():
+        unit = benchmark_unit(rows)
+        lower = is_lower_better(unit)
+        baseline = benchmark_baseline(rows)
+        if baseline is None:
+            bench_rows.append(
+                f'<div class="bench-summary">'
+                f'<span class="bench-name">{html.escape(bm)}</span>'
+                f'<span class="muted">no baseline recorded</span>'
+                f'</div>'
+            )
+            continue
+        kept = [p for p in rows if p["status"] in ("baseline", "improved") and p["metric"] is not None]
+        if kept:
+            best_row = (min(kept, key=lambda p: p["metric"]) if lower
+                        else max(kept, key=lambda p: p["metric"]))
+            best = best_row["metric"]
+            best_idx = best_row["idx"]
+        else:
+            best, best_idx = baseline, rows[0]["idx"]
+        delta = (best - baseline) / baseline * 100 if baseline else 0
+        if lower:
+            delta = -delta
+        bench_rows.append(
+            f'<div class="bench-summary">'
+            f'<span class="bench-name">{html.escape(bm)}</span>'
+            f'<span>baseline <b>{baseline:g}</b> {html.escape(unit)}</span>'
+            f'<span>best <b>{best:g}</b> {html.escape(unit)} @ row {best_idx}</span>'
+            f'<span class="delta {"pos" if delta >= 0 else "neg"}">{delta:+.2f}%</span>'
+            f'</div>'
+        )
+    return global_summary + "".join(bench_rows)
 
 
 def render_table(rows):
     out = ['<table><thead><tr>',
-           '<th>#</th><th>timestamp</th><th>metric</th><th>unit</th><th>status</th><th>description</th>',
+           '<th>#</th><th>timestamp</th><th>benchmark</th><th>metric</th>',
+           '<th>unit</th><th>status</th><th>description</th>',
            '</tr></thead><tbody>']
     for i, row in enumerate(rows):
-        status = row.get("status", "")
+        status = row.get("status", "") or ""
         color = STATUS_COLORS.get(status, "#777")
-        out.append(f'<tr>')
+        bm = row.get("benchmark", "") or ""
+        bm_cls = "bench sentinel" if bm == SENTINEL else "bench"
+        out.append('<tr>')
         out.append(f'<td class="num">{i}</td>')
-        out.append(f'<td class="ts">{html.escape(row.get("timestamp", ""))}</td>')
-        out.append(f'<td class="metric">{html.escape(row.get("metric_value", ""))}</td>')
-        out.append(f'<td>{html.escape(row.get("unit", ""))}</td>')
+        out.append(f'<td class="ts">{html.escape(row.get("timestamp", "") or "")}</td>')
+        out.append(f'<td class="{bm_cls}">{html.escape(bm)}</td>')
+        out.append(f'<td class="metric">{html.escape(row.get("metric_value", "") or "")}</td>')
+        out.append(f'<td>{html.escape(row.get("unit", "") or "")}</td>')
         out.append(f'<td><span class="badge" style="background:{color}">{html.escape(status)}</span></td>')
-        out.append(f'<td>{html.escape(row.get("description", ""))}</td>')
+        out.append(f'<td>{html.escape(row.get("description", "") or "")}</td>')
         out.append('</tr>')
     out.append('</tbody></table>')
     return "".join(out)
@@ -235,13 +358,13 @@ def render_section(path: Path, collapsed: bool = False):
     name = html.escape(path.name)
     try:
         rows = load_log(path)
-        unit = next((r.get("unit", "") for r in rows if r.get("unit")), "")
-        lower_better = is_lower_better(unit)
+        parsed = parse_rows(rows)
+        by_bm, sentinels = group_by_benchmark(parsed)
         body = (
             f'<h2>{name}</h2>'
-            f'{render_summary(rows, unit, lower_better)}'
-            f'{render_chart(rows, lower_better)}'
-            f'<details><summary>show {len(rows)} trials</summary>{render_table(rows)}</details>'
+            f'{render_summary(parsed, by_bm, sentinels)}'
+            f'{render_chart(by_bm)}'
+            f'<details><summary>show {len(rows)} rows</summary>{render_table(rows)}</details>'
         )
         count = len(rows)
     except OSError as e:
@@ -250,7 +373,7 @@ def render_section(path: Path, collapsed: bool = False):
 
     if not collapsed:
         return f'<section data-run="{name}">{body}</section>'
-    summary = f'{name} · {count} trials' if count else name
+    summary = f'{name} · {count} rows' if count else name
     return (f'<details class="run" data-run="{name}">'
             f'<summary>{summary}</summary>'
             f'<section>{body}</section>'
@@ -273,13 +396,26 @@ PAGE = """<!doctype html>
   section h2 {{ margin: 0 0 10px; font-size: 14px; font-weight: 500; color: #fff;
                 font-family: ui-monospace, SFMono-Regular, monospace; }}
   .summary {{ display: flex; flex-wrap: wrap; gap: 18px; font-size: 12.5px; color: #aaa;
-              margin-bottom: 14px; }}
+              margin-bottom: 10px; }}
   .summary b {{ color: #fff; font-weight: 600; }}
+  .bench-summary {{ display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: #aaa;
+                    padding: 4px 0 4px 12px; border-left: 2px solid #262626;
+                    margin-bottom: 2px; }}
+  .bench-summary:last-of-type {{ margin-bottom: 12px; }}
+  .bench-summary b {{ color: #fff; font-weight: 600; }}
+  .bench-name {{ color: #ddd; font-weight: 500;
+                 font-family: ui-monospace, SFMono-Regular, monospace; }}
   .delta.pos {{ color: #3a8; }}
   .delta.neg {{ color: #c62; }}
   .muted {{ color: #666; }}
   .chart {{ display: block; width: 100%; height: auto; background: #0a0a0a;
             border-radius: 4px; }}
+  .legend {{ display: flex; flex-wrap: wrap; gap: 14px; font-size: 11px; color: #aaa;
+             margin-top: 6px; }}
+  .legend-item {{ display: inline-flex; align-items: center; gap: 5px;
+                  font-family: ui-monospace, SFMono-Regular, monospace; }}
+  .legend-swatch {{ display: inline-block; width: 10px; height: 10px; border-radius: 2px; }}
+  .legend-unit {{ color: #666; }}
   table {{ width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px;
            font-family: ui-monospace, SFMono-Regular, monospace; }}
   th, td {{ padding: 4px 10px; text-align: left; border-bottom: 1px solid #1f1f1f;
@@ -288,6 +424,8 @@ PAGE = """<!doctype html>
         letter-spacing: 0.04em; }}
   td.num, td.metric {{ text-align: right; font-variant-numeric: tabular-nums; }}
   td.ts {{ color: #888; }}
+  td.bench {{ color: #ccc; }}
+  td.bench.sentinel {{ color: #666; font-style: italic; }}
   .badge {{ display: inline-block; padding: 1px 6px; border-radius: 3px; color: #000;
             font-size: 10px; text-transform: uppercase; letter-spacing: 0.03em;
             font-weight: 600; }}
