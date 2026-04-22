@@ -61,15 +61,48 @@ Exact commands to build the project from a clean state and to do an incremental 
 
 Exact command(s) to run correctness checks. Describe what a passing run looks like (exit code, expected output pattern, etc.).
 
-### Benchmark
+### Benchmarks
 
-Exact command(s) to run the performance benchmark. Describe:
+List **every** benchmark you find — not just the one that looks most important.
+A project commonly has more than one (e.g. one benchmark per kernel, or a suite
+harness alongside a microbench). `optimize-cuda` needs to know about all of
+them so the user can target some or all.
 
-- The **metric** being measured (e.g. "execution time", "memory bandwidth", "GFLOP/s").
-- The **unit** (e.g. ms, GiB/s, GFLOP/s).
-- The **direction** (higher is better or lower is better).
-- How to **extract the metric value** from the benchmark output (e.g. "parse the last line", "read the JSON field `results.mean_time`", "take the median of the Bandwidth column").
-- Whether the benchmark produces **multiple measurements** (e.g. across data sizes, types, or configurations) and how they should be aggregated (min, max, mean).
+For each benchmark, give its own subsection named after the benchmark itself
+(e.g. `#### bench_matmul`), with every one of the following fields:
+
+- **Command** — the exact shell command to run it from the repo root (e.g.
+  `./build/bench_matmul`). Include any flags the benchmark needs.
+- **Metric** — what it measures (execution time, memory bandwidth, GFLOP/s,
+  latency, etc.).
+- **Unit** — `ms`, `GiB/s`, `GFLOP/s`, etc.
+- **Direction** — higher is better, or lower is better.
+- **Metric extraction** — exactly how to pull the metric value from the
+  benchmark's output (e.g. "parse the last line", "read the JSON field
+  `results.mean_time`", "take the median of the Bandwidth column").
+- **Axes** — every sweep dimension the benchmark iterates over, with the
+  concrete set of values each takes. Format: one bullet per axis. Examples:
+  - `dtype ∈ {float, half, __nv_bfloat16}`
+  - `N ∈ {256, 1024, 4096}`
+  - `block_size ∈ {64, 128, 256}`
+
+  If the benchmark takes no axes (single measurement per run), say so
+  explicitly: `Axes: none`.
+- **Aggregation** — if a run produces multiple measurements (one per point in
+  the axis product), how to reduce them to a single scalar for this
+  benchmark. E.g. `min` for bandwidth (worst case wins), `max` for latency,
+  `geomean` for a mix of shapes. For a no-axes benchmark, say `N/A`.
+
+If the benchmarks have an obvious relationship — one wraps another, one is a
+microbench of an operation that's part of another, etc. — note it under a
+final "Relationships" paragraph. Otherwise treat them as independent targets.
+
+### Cross-benchmark aggregation
+
+If there's more than one benchmark, also specify how their per-benchmark
+metrics combine into a single scalar that drives the keep-or-revert decision
+when the user targets multiple benchmarks at once. Default if none is
+specified: geometric mean of per-benchmark speedup versus baseline.
 
 ### Timeouts
 
