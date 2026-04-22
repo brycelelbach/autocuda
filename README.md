@@ -13,14 +13,14 @@ to a log of trials and (hopefully) a faster codebase.
 
 autocuda ships two Claude Code skills:
 
-- **`discover-cuda`** - explores an unfamiliar CUDA project, identifies editable
-  vs read-only files, verifies the build and benchmark run, and writes a
-  `project-layout.md` that pins down the ground truth for the optimization
-  loop.
-- **`optimize-cuda`** - reads `project-layout.md`, then runs the trial loop:
-  modify source, build, validate, benchmark, keep-or-revert, log, repeat.
-  Commits every winning change on an `experiment/<tag>` branch so the history
-  is reviewable.
+- **`autocuda:discover`** - explores an unfamiliar CUDA project, identifies
+  editable vs read-only files, verifies the build and benchmark run, and
+  writes a `project-layout.md` that pins down the ground truth for the
+  optimization loop.
+- **`autocuda:optimize`** - reads `project-layout.md`, then runs the trial
+  loop: modify source, build, validate, benchmark, keep-or-revert, log,
+  repeat. Commits every winning change on an `experiment/<tag>` branch so
+  the history is reviewable.
 
 The repo also ships several example kernels under `kernels/` that can be used
 as targets for the skills:
@@ -53,7 +53,7 @@ Install the plugin via Claude Code's plugin marketplace:
 /plugin install autocuda@brycelelbach-autocuda
 ```
 
-Invoke via skill invocation: `discover-cuda` and `optimize-cuda`.
+Invoke via `/autocuda:discover` and `/autocuda:optimize`.
 
 For unattended setup (Claude Code install + marketplace registration in one
 shot), run `bootstrap.bash`:
@@ -75,9 +75,9 @@ cmake --build build --parallel
 ./build/bench_memcpy
 ```
 
-Then open this directory in Claude Code, run the `discover-cuda` skill to
-produce `project-layout.md`, then hand off to the `optimize-cuda` skill to run
-the trial loop.
+Then open this directory in Claude Code, run the `autocuda:discover` skill to
+produce `project-layout.md`, then hand off to the `autocuda:optimize` skill to
+run the trial loop.
 
 ## Project structure
 
@@ -89,8 +89,8 @@ plugins/
     .claude-plugin/
       plugin.json            - plugin manifest
     skills/
-      discover-cuda/         - discover project structure, produce project-layout.md
-      optimize-cuda/         - run the autonomous optimization trial loop
+      discover/              - discover project structure, produce project-layout.md
+      optimize/              - run the autonomous optimization trial loop
 
 kernels/                     - example CUDA workloads used as optimization targets
   memcpy/
