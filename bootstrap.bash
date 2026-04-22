@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# Bootstrap script for running Claude Code unattended with this repo's skills.
+# Bootstrap script for running Claude Code unattended with the autocuda plugin.
 #
 # Does three things, idempotently:
 #   1. Installs Claude Code (native installer) if not already present.
 #   2. Writes ~/.claude/settings.json with the unattended-mode defaults
 #      (bypass permissions, sandboxed, max effort, opus-4-7) and appends
 #      PATH / alias / env exports to ~/.bashrc.
-#   3. Symlinks each skill under this repo's skills/ into ~/.claude/skills/
-#      so Claude Code picks them up as user-scope skills.
+#   3. Symlinks each skill under plugins/autocuda/skills/ into
+#      ~/.claude/skills/ so Claude Code picks them up as user-scope skills.
+#      (Equivalent to `/plugin marketplace add brycelelbach/autocuda` +
+#      `/plugin install autocuda@brycelelbach-autocuda`, but runs without a
+#      Claude Code session.)
 #
 # Can be run from a local checkout or piped via `curl ... | bash`. In the
 # piped case, the repo is cloned into ~/autocuda (override with AUTOCUDA_DIR).
@@ -115,14 +118,19 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# 3. Symlink this repo's skills into ~/.claude/skills/.
+# 3. Symlink the autocuda plugin's skills into ~/.claude/skills/.
 # ---------------------------------------------------------------------------
 link_skills() {
     mkdir -p "${SKILLS_DIR}"
+    local plugin_skills_dir="${REPO_DIR}/plugins/autocuda/skills"
+    if [[ ! -d "${plugin_skills_dir}" ]]; then
+        log "warning: no plugin skills dir at ${plugin_skills_dir}"
+        return
+    fi
     local src
     local count=0
     shopt -s nullglob
-    for src in "${REPO_DIR}"/skills/*/; do
+    for src in "${plugin_skills_dir}"/*/; do
         src="${src%/}"
         local name
         name="$(basename "${src}")"
@@ -136,7 +144,7 @@ link_skills() {
     done
     shopt -u nullglob
     if [[ "${count}" -eq 0 ]]; then
-        log "warning: no skills found under ${REPO_DIR}/skills/"
+        log "warning: no skills found under ${plugin_skills_dir}"
     fi
 }
 

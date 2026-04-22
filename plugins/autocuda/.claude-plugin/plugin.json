@@ -1,0 +1,5 @@
+{
+  "name": "autocuda",
+  "version": "0.1.0",
+  "description": "Autonomous CUDA optimization via discover-cuda + optimize-cuda skills"
+}

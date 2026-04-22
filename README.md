@@ -41,10 +41,30 @@ Each kernel directory has two files:
   Everything is fair game: vectorisation, memory access patterns, block size,
   loop structure, type-specific specialisations, etc.
 
-## Quick start
+## Install
 
 **Requirements:** a single NVIDIA GPU, CMake 3.30+, a CUDA toolkit, and
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
+
+Install the plugin via Claude Code's plugin marketplace:
+
+```
+/plugin marketplace add brycelelbach/autocuda
+/plugin install autocuda@brycelelbach-autocuda
+```
+
+Invoke via skill invocation: `discover-cuda` and `optimize-cuda`.
+
+For unattended setup (Claude Code install + marketplace registration in one
+shot), run `bootstrap.bash`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/brycelelbach/autocuda/main/bootstrap.bash | bash
+```
+
+## Quick start
+
+To try the skills against the example kernels bundled with this repo:
 
 ```bash
 # 1. Build all benchmarks
@@ -55,32 +75,31 @@ cmake --build build --parallel
 ./build/bench_memcpy
 ```
 
-Then open this directory in Claude Code and invoke the skills. Start with
-`discover-cuda` to produce `project-layout.md`, then hand off to `optimize-cuda`
-to run the trial loop.
-
-For unattended setup (Claude Code install + skill registration in one shot),
-run `bootstrap.bash`:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/brycelelbach/autocuda/main/bootstrap.bash | bash
-```
+Then open this directory in Claude Code, run the `discover-cuda` skill to
+produce `project-layout.md`, then hand off to the `optimize-cuda` skill to run
+the trial loop.
 
 ## Project structure
 
 ```
-kernels/
-  memcpy/            - vectorised device-to-device copy
-    bench.cu         - fixed nvbench harness (do not modify)
-    kernel.cuh       - kernel source (agent modifies this)
-  stencil/           - 5-point heat equation stencil
-  matmul/            - dense matrix multiplication
-  sigmoid/           - PyTorch-style sigmoid operator
-CMakeLists.txt       - build system (do not modify)
+.claude-plugin/
+  marketplace.json           - marketplace manifest (consumed by /plugin marketplace add)
+plugins/
+  autocuda/
+    .claude-plugin/
+      plugin.json            - plugin manifest
+    skills/
+      discover-cuda/         - discover project structure, produce project-layout.md
+      optimize-cuda/         - run the autonomous optimization trial loop
 
-skills/
-  discover-cuda/     - discover project structure, produce project-layout.md
-  optimize-cuda/     - run the autonomous optimization trial loop
+kernels/                     - example CUDA workloads used as optimization targets
+  memcpy/
+    bench.cu                 - fixed nvbench harness (do not modify)
+    kernel.cuh               - kernel source (agent modifies this)
+  stencil/                   - 5-point heat equation stencil
+  matmul/                    - dense matrix multiplication
+  sigmoid/                   - PyTorch-style sigmoid operator
+CMakeLists.txt               - build system for the example kernels
 ```
 
 ## Design choices

@@ -1,0 +1,13 @@
+{
+  "name": "brycelelbach-autocuda",
+  "owner": {
+    "name": "brycelelbach"
+  },
+  "plugins": [
+    {
+      "name": "autocuda",
+      "source": "./plugins/autocuda",
+      "description": "Autonomous CUDA optimization via discover-cuda + optimize-cuda skills"
+    }
+  ]
+}
