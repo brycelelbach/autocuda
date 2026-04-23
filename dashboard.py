@@ -6,11 +6,16 @@ HTML page on http://localhost:8000/. Stdlib only, no dependencies.
 
 The page auto-refreshes so you can leave it open while the optimizer runs.
 
-Consumes the multi-benchmark log schema produced by the autocuda:optimize
-skill: ``timestamp,benchmark,metric_value,unit,status,description``.
-Rows with ``benchmark=_all_`` are non-benchmark-specific markers
-(compactions, validation/build/runtime errors that aborted the whole
-trial) and do not appear in the overlay chart.
+Consumes the one-row-per-trial schema produced by the autocuda:optimize
+skill. The CSV header looks like
+
+    timestamp,<bench_1>,<bench_2>,...,<bench_N>,status,description
+
+with `timestamp`, `status`, `description` as fixed metadata columns and
+every other column being a benchmark. Benchmark columns hold the
+measured metric for that trial (or `N/A` for compactions, failures, or
+benchmarks outside the active set). The dashboard renders one coloured
+curve per benchmark column, each against its own baseline.
 """
 
 import argparse
@@ -31,31 +36,30 @@ STATUS_COLORS = {
     "compaction":       "#557",
 }
 
-LOWER_IS_BETTER_UNITS = {"ms", "s", "us", "ns", "µs", "sec", "seconds"}
-
 # Palette for per-benchmark chart lines. Cycles if there are more benchmarks.
 BENCHMARK_COLORS = [
     "#3a8", "#e6a23c", "#9966ff", "#ef476f",
     "#14b8a6", "#f59e0b", "#6366f1", "#f472b6",
 ]
 
-# Sentinel value used in the `benchmark` column for rows that don't belong to
-# one specific benchmark (compactions, whole-trial failures).
-SENTINEL = "_all_"
-
-
-def is_lower_better(unit: str) -> bool:
-    return unit.strip().lower() in LOWER_IS_BETTER_UNITS
+METADATA_COLUMNS = {"timestamp", "status", "description"}
 
 
 def load_log(path: Path):
     with path.open(newline="") as f:
-        return list(csv.DictReader(f))
+        reader = csv.DictReader(f)
+        rows = list(reader)
+        columns = list(reader.fieldnames or [])
+    return columns, rows
 
 
-def parse_metric(row):
+def benchmark_columns(columns):
+    return [c for c in columns if c not in METADATA_COLUMNS]
+
+
+def parse_metric(raw):
     try:
-        return float(row.get("metric_value", ""))
+        return float(raw)
     except (TypeError, ValueError):
         return None
 
@@ -81,13 +85,12 @@ def fmt_duration(sec: float) -> str:
     return f"{h}h{m:02d}m" if m else f"{h}h"
 
 
-def parse_rows(rows):
-    """Parse rows, clamping timestamps monotonically across the full sequence.
+def parse_rows(rows, bench_cols):
+    """Parse rows, clamping timestamps monotonically across the sequence.
 
-    Returns a list of dicts with: idx, benchmark, metric, raw_t, t, status,
-    unit, description, timestamp_str, metric_str. Clamping is done across the
-    whole CSV (not per-benchmark) so the x-axis stays consistent when a single
-    trial writes interleaved benchmark rows.
+    Returns one dict per row with: idx, raw_t, t, values (dict bm -> float or
+    None), status, description, timestamp_str. Benchmarks whose cell is "N/A"
+    or unparseable land as None in values.
     """
     parsed = []
     running_max = None
@@ -101,50 +104,44 @@ def parse_rows(rows):
             t = raw_t if raw_t >= running_max else running_max
         if t is not None:
             running_max = t
+        values = {bm: parse_metric(r.get(bm, "")) for bm in bench_cols}
         parsed.append({
             "idx": i,
             "raw_t": raw_t,
             "t": t,
-            "benchmark": (r.get("benchmark") or "").strip(),
-            "metric": parse_metric(r),
-            "unit": r.get("unit", "") or "",
+            "values": values,
             "status": r.get("status", "") or "",
             "description": r.get("description", "") or "",
             "timestamp_str": r.get("timestamp", "") or "",
-            "metric_str": r.get("metric_value", "") or "",
         })
     return parsed
 
 
-def group_by_benchmark(parsed):
-    """Return (ordered dict bm -> rows, list of sentinel rows).
-
-    Insertion order of the dict reflects first-appearance order of each
-    benchmark in the log, so chart colors stay stable across refreshes.
-    """
-    by_bm = {}
-    sentinels = []
+def benchmark_baseline(parsed, bm):
     for p in parsed:
-        bm = p["benchmark"]
-        if not bm or bm == SENTINEL:
-            sentinels.append(p)
-        else:
-            by_bm.setdefault(bm, []).append(p)
-    return by_bm, sentinels
-
-
-def benchmark_unit(bm_rows):
-    return next((p["unit"] for p in bm_rows if p["unit"]), "")
-
-
-def benchmark_baseline(bm_rows):
-    for p in bm_rows:
-        if p["status"] == "baseline" and p["metric"] is not None:
-            return p["metric"]
-    for p in bm_rows:
-        if p["metric"] is not None:
-            return p["metric"]
+        if p["status"] == "baseline":
+            v = p["values"].get(bm)
+            if v is not None:
+                return v
+    for p in parsed:
+        v = p["values"].get(bm)
+        if v is not None:
+            return v
     return None
+
+
+def benchmark_lower_better(parsed, bm, baseline):
+    """Infer direction from improved rows: if the committed 'improved' trials
+    average below baseline, the benchmark is lower-is-better; otherwise higher.
+    Defaults to higher-is-better if no 'improved' rows exist yet.
+    """
+    if baseline is None:
+        return False
+    improved = [p["values"][bm] for p in parsed
+                if p["status"] == "improved" and p["values"].get(bm) is not None]
+    if not improved:
+        return False
+    return (sum(improved) / len(improved)) < baseline
 
 
 def compute_speedup(metric, baseline, lower_better):
@@ -157,29 +154,35 @@ def compute_speedup(metric, baseline, lower_better):
     return metric / baseline
 
 
-def render_chart(by_bm, width=900, height=280, pad=52):
-    """Overlay chart: one speedup curve per benchmark, shared x (walltime) and
-    y (speedup vs that benchmark's own baseline, so every benchmark's 1.0
-    coincides with the dashed reference line)."""
+def render_chart(parsed, bench_cols, width=900, height=280, pad=52):
+    """Overlay chart: one speedup curve per benchmark column, shared x
+    (walltime) and y (speedup vs that benchmark's own baseline, so every
+    benchmark's 1.0 coincides with the dashed reference line)."""
     series = []
-    for idx, (bm, rows) in enumerate(by_bm.items()):
-        unit = benchmark_unit(rows)
-        lower = is_lower_better(unit)
-        baseline = benchmark_baseline(rows)
+    for idx, bm in enumerate(bench_cols):
+        baseline = benchmark_baseline(parsed, bm)
         if baseline is None:
             continue
+        lower = benchmark_lower_better(parsed, bm, baseline)
         pts = []
-        for p in rows:
-            if p["metric"] is None or p["t"] is None:
+        for p in parsed:
+            v = p["values"].get(bm)
+            if v is None or p["t"] is None:
                 continue
-            sp = compute_speedup(p["metric"], baseline, lower)
+            sp = compute_speedup(v, baseline, lower)
             if sp is None:
                 continue
-            pts.append({**p, "speedup": sp})
+            pts.append({
+                "idx": p["idx"],
+                "raw_t": p["raw_t"],
+                "t": p["t"],
+                "status": p["status"],
+                "metric": v,
+                "speedup": sp,
+            })
         if pts:
             series.append({
                 "benchmark": bm,
-                "unit": unit,
                 "baseline": baseline,
                 "lower": lower,
                 "points": pts,
@@ -222,7 +225,6 @@ def render_chart(by_bm, width=900, height=280, pad=52):
     for s in series:
         color = s["color"]
         bm_esc = html.escape(s["benchmark"])
-        unit_esc = html.escape(s["unit"])
         kept = [q for q in s["points"] if q["status"] in ("baseline", "improved")]
         if len(kept) >= 2:
             d = "M " + " L ".join(
@@ -242,7 +244,7 @@ def render_chart(by_bm, width=900, height=280, pad=52):
             parts.append(
                 f'<circle cx="{x(dt):.1f}" cy="{y(q["speedup"]):.1f}" r="3.5"'
                 f' fill="{dot_fill}" stroke="{color}" stroke-width="1.5">'
-                f'<title>{bm_esc} row {q["idx"]}: {q["speedup"]:.3f}× ({q["metric"]:g} {unit_esc})'
+                f'<title>{bm_esc} row {q["idx"]}: {q["speedup"]:.3f}× ({q["metric"]:g})'
                 f' @ {fmt_duration(dt)} ({q["status"]}){note}</title>'
                 f'</circle>'
             )
@@ -253,23 +255,21 @@ def render_chart(by_bm, width=900, height=280, pad=52):
         f'<span class="legend-item">'
         f'<span class="legend-swatch" style="background:{s["color"]}"></span>'
         f'{html.escape(s["benchmark"])}'
-        f'<span class="legend-unit">{html.escape(s["unit"])}</span>'
         f'</span>'
         for s in series
     )
     return "".join(parts) + f'<div class="legend">{legend_items}</div>'
 
 
-def render_summary(parsed, by_bm, sentinels):
+def render_summary(parsed, bench_cols):
     """Global run-level summary plus a per-benchmark line for baseline/best/delta."""
-    # Distinct timestamps (excluding compactions) ≈ number of trials.
     trial_ts = {
         p["timestamp_str"]
         for p in parsed
         if p["status"] != "compaction" and p["timestamp_str"]
     }
     n_trials = len(trial_ts)
-    n_benchmarks = len(by_bm)
+    n_benchmarks = len(bench_cols)
 
     failed_trial_ts = {
         p["timestamp_str"]
@@ -297,10 +297,8 @@ def render_summary(parsed, by_bm, sentinels):
     global_summary = f'<div class="summary">{"".join(global_bits)}</div>'
 
     bench_rows = []
-    for bm, rows in by_bm.items():
-        unit = benchmark_unit(rows)
-        lower = is_lower_better(unit)
-        baseline = benchmark_baseline(rows)
+    for bm in bench_cols:
+        baseline = benchmark_baseline(parsed, bm)
         if baseline is None:
             bench_rows.append(
                 f'<div class="bench-summary">'
@@ -309,44 +307,48 @@ def render_summary(parsed, by_bm, sentinels):
                 f'</div>'
             )
             continue
-        kept = [p for p in rows if p["status"] in ("baseline", "improved") and p["metric"] is not None]
+        lower = benchmark_lower_better(parsed, bm, baseline)
+        kept = [p for p in parsed
+                if p["status"] in ("baseline", "improved") and p["values"].get(bm) is not None]
         if kept:
-            best_row = (min(kept, key=lambda p: p["metric"]) if lower
-                        else max(kept, key=lambda p: p["metric"]))
-            best = best_row["metric"]
+            best_row = (min(kept, key=lambda p: p["values"][bm]) if lower
+                        else max(kept, key=lambda p: p["values"][bm]))
+            best = best_row["values"][bm]
             best_idx = best_row["idx"]
         else:
-            best, best_idx = baseline, rows[0]["idx"]
+            best, best_idx = baseline, parsed[0]["idx"] if parsed else 0
         delta = (best - baseline) / baseline * 100 if baseline else 0
         if lower:
             delta = -delta
         bench_rows.append(
             f'<div class="bench-summary">'
             f'<span class="bench-name">{html.escape(bm)}</span>'
-            f'<span>baseline <b>{baseline:g}</b> {html.escape(unit)}</span>'
-            f'<span>best <b>{best:g}</b> {html.escape(unit)} @ row {best_idx}</span>'
+            f'<span>baseline <b>{baseline:g}</b></span>'
+            f'<span>best <b>{best:g}</b> @ row {best_idx}</span>'
             f'<span class="delta {"pos" if delta >= 0 else "neg"}">{delta:+.2f}%</span>'
             f'</div>'
         )
     return global_summary + "".join(bench_rows)
 
 
-def render_table(rows):
-    out = ['<table><thead><tr>',
-           '<th>#</th><th>timestamp</th><th>benchmark</th><th>metric</th>',
-           '<th>unit</th><th>status</th><th>description</th>',
-           '</tr></thead><tbody>']
+def render_table(rows, columns):
+    bench_cols = benchmark_columns(columns)
+    header_cells = (
+        '<th>#</th><th>timestamp</th>'
+        + "".join(f'<th class="bench-col">{html.escape(bm)}</th>' for bm in bench_cols)
+        + '<th>status</th><th>description</th>'
+    )
+    out = [f'<table><thead><tr>{header_cells}</tr></thead><tbody>']
     for i, row in enumerate(rows):
         status = row.get("status", "") or ""
         color = STATUS_COLORS.get(status, "#777")
-        bm = row.get("benchmark", "") or ""
-        bm_cls = "bench sentinel" if bm == SENTINEL else "bench"
         out.append('<tr>')
         out.append(f'<td class="num">{i}</td>')
         out.append(f'<td class="ts">{html.escape(row.get("timestamp", "") or "")}</td>')
-        out.append(f'<td class="{bm_cls}">{html.escape(bm)}</td>')
-        out.append(f'<td class="metric">{html.escape(row.get("metric_value", "") or "")}</td>')
-        out.append(f'<td>{html.escape(row.get("unit", "") or "")}</td>')
+        for bm in bench_cols:
+            cell = row.get(bm, "") or ""
+            cls = "metric muted" if cell.strip().upper() == "N/A" else "metric"
+            out.append(f'<td class="{cls}">{html.escape(cell)}</td>')
         out.append(f'<td><span class="badge" style="background:{color}">{html.escape(status)}</span></td>')
         out.append(f'<td>{html.escape(row.get("description", "") or "")}</td>')
         out.append('</tr>')
@@ -357,14 +359,14 @@ def render_table(rows):
 def render_section(path: Path, collapsed: bool = False):
     name = html.escape(path.name)
     try:
-        rows = load_log(path)
-        parsed = parse_rows(rows)
-        by_bm, sentinels = group_by_benchmark(parsed)
+        columns, rows = load_log(path)
+        bench_cols = benchmark_columns(columns)
+        parsed = parse_rows(rows, bench_cols)
         body = (
             f'<h2>{name}</h2>'
-            f'{render_summary(parsed, by_bm, sentinels)}'
-            f'{render_chart(by_bm)}'
-            f'<details><summary>show {len(rows)} rows</summary>{render_table(rows)}</details>'
+            f'{render_summary(parsed, bench_cols)}'
+            f'{render_chart(parsed, bench_cols)}'
+            f'<details><summary>show {len(rows)} rows</summary>{render_table(rows, columns)}</details>'
         )
         count = len(rows)
     except OSError as e:
@@ -415,17 +417,15 @@ PAGE = """<!doctype html>
   .legend-item {{ display: inline-flex; align-items: center; gap: 5px;
                   font-family: ui-monospace, SFMono-Regular, monospace; }}
   .legend-swatch {{ display: inline-block; width: 10px; height: 10px; border-radius: 2px; }}
-  .legend-unit {{ color: #666; }}
   table {{ width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px;
            font-family: ui-monospace, SFMono-Regular, monospace; }}
   th, td {{ padding: 4px 10px; text-align: left; border-bottom: 1px solid #1f1f1f;
             vertical-align: top; }}
   th {{ color: #777; font-weight: 500; font-size: 11px; text-transform: uppercase;
         letter-spacing: 0.04em; }}
+  th.bench-col {{ text-align: right; }}
   td.num, td.metric {{ text-align: right; font-variant-numeric: tabular-nums; }}
   td.ts {{ color: #888; }}
-  td.bench {{ color: #ccc; }}
-  td.bench.sentinel {{ color: #666; font-style: italic; }}
   .badge {{ display: inline-block; padding: 1px 6px; border-radius: 3px; color: #000;
             font-size: 10px; text-transform: uppercase; letter-spacing: 0.03em;
             font-weight: 600; }}
