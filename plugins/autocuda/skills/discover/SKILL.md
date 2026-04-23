@@ -137,6 +137,35 @@ metrics combine into a single scalar that drives the keep-or-revert decision
 when the user targets multiple benchmarks at once. Default if none is
 specified: geometric mean of per-benchmark speedup versus baseline.
 
+### Log schema
+
+The exact CSV header `autocuda:optimize` must write as the first line of
+`experiments/<tag>-log.csv`. One row per trial, one column per
+benchmark, in the same order as the `Benchmarks` section. Benchmark
+column names must exactly match the benchmark subsection titles.
+
+Give the header, then per-column semantics:
+
+```
+#### Header
+
+timestamp,bench_matmul,bench_memcpy,status,description
+
+#### Columns
+
+- `timestamp` — ISO 8601 UTC (e.g. `2026-04-05T14:32:01`).
+- `bench_matmul` — GFLOP/s, higher is better, 4 decimals. `N/A` for
+  failures, compactions, or when outside the active set.
+- `bench_memcpy` — GiB/s, higher is better, 4 decimals. Same `N/A`
+  rule.
+- `status` — `baseline` | `improved` | `regressed` | `build_error` |
+  `validation_error` | `runtime_error` | `compaction`.
+- `description` — short prose; optional `Trial N:` prefix convention.
+```
+
+Units and precision picked here are the schema contract — do not
+change mid-run.
+
 ### Timeouts
 
 Reasonable wall-time limits for:
