@@ -12,8 +12,7 @@ description: >-
 
 You are an autonomous CUDA optimizer. You modify source files, validate
 correctness, benchmark performance, and keep or discard each change based on
-measured results. You run trials until stopped. **Only the human can stop
-you** — the trial loop has no internal termination condition.
+measured results. You run trials until stopped.
 
 ## Prerequisites
 
@@ -82,9 +81,7 @@ Do not follow a fixed checklist of optimization tricks. Infer what to try next f
 
 Form a hypothesis about what limits performance, propose a change that tests it, and explain your reasoning. One incremental change per trial — each should test exactly one hypothesis.
 
-A failed trial is not a wasted trial. A regression, a build error, a validation failure — each rules out a hypothesis and narrows the search space. Log it, revert, move on. Do not treat a streak of regressions as a signal that the kernel is "done"; see **When you're stuck** below.
-
-If obvious ideas are exhausted, see **When you're stuck** below. Do not stop — ideas are never actually exhausted.
+If obvious ideas are exhausted, think harder. Re-read the source for missed opportunities. Try combining near-misses from previous trials. Try more radical structural changes. Try the opposite of what you've been doing.
 
 ### Structural changes
 
@@ -154,33 +151,6 @@ sudo -E nsys profile --stats=true <benchmark_command>
 
 See [NVIDIA's ERR_NVGPUCTRPERM guide](https://developer.nvidia.com/ERR_NVGPUCTRPERM) for background. Never abandon profiling just because the tool reported an error on the first try — `sudo` almost always resolves it. If sudo also fails, try the remediations in the `autocuda:discover` skill (adjusting `PATH`, `LD_LIBRARY_PATH`, `kernel.perf_event_paranoid`, etc.) before giving up, and update `project-layout.md`'s Profiling section with whatever finally worked so subsequent trials don't repeat the troubleshooting.
 
-### When you're stuck
-
-"I've run out of ideas" is a trigger for a specific algorithm, **never** a reason to stop the trial loop. If 3 or more consecutive trials regress, or you catch yourself thinking "I've tried everything" / "this is already optimal" / "there's nothing left to try," execute this checklist in order:
-
-1. **Profile right now.** Run `nsys` and `ncu` on the current best code (not on a trial variant). If you are stuck, it is almost always because you do not know the true bottleneck. Read every rule-result in the NCU output — each rule is a directly actionable hypothesis handed to you by the tool.
-2. **Re-read every editable source file end-to-end.** Not a diff — the whole file, top to bottom. Bottlenecks you missed before often become obvious after fresh profile data reframes the problem.
-3. **Invert what you've been doing.** If you've been adding, try removing. If you've been specializing, try generalizing. If you've been tiling in one dimension, try the other. If you've been hand-writing a kernel, try the library. If you've been using the library, try a fused custom kernel. If you've been chasing compute, chase memory (or vice versa).
-4. **Enumerate families you have NOT tried yet**, then pick the most promising and run a trial. The list is long — you are not out of options:
-   - Memory layout: SoA↔AoS, padding to avoid bank conflicts, coalesced vs. strided loads, vectorized loads/stores (`float2`, `float4`, `int4`).
-   - Launch config: grid/block/tile shapes, launch bounds, persistent kernels.
-   - Occupancy: register pressure, shared-memory allocation, spill reduction, `__launch_bounds__`.
-   - Algorithms: different parallel decompositions, work-efficient variants, hierarchical reductions, scan/segmented-scan primitives.
-   - Libraries: cuBLAS / cuBLASLt / CUTLASS / cuDNN / cuFFT / cuSPARSE / cuRAND / Thrust / CUB substitutions — even partial ones.
-   - Kernel fusion or splitting to change the memory-traffic / compute balance.
-   - Numerical precision: fp16, bf16, tf32, int8, mixed-precision accumulate.
-   - Tensor cores: WMMA API, CUTLASS MMA, cuBLASLt with tensor-op math mode.
-   - Streams, async copies (`cp.async`), overlap of compute and transfer.
-   - CUDA graphs for launch-overhead-dominated workloads.
-   - Cooperative groups, warp-level primitives (`__shfl_*`, `__ballot_sync`, `__reduce_*_sync`).
-   - PTX intrinsics or inline assembly for a critical inner loop.
-   - Load balancing / work stealing for irregular workloads.
-5. **Combine near-misses.** Scan the last ~20 log rows for trials that came close to break-even. Two independent near-wins often combine into a real win.
-6. **Shift benchmarks.** In a multi-benchmark run, form your next hypothesis around a different benchmark in the active set. A change that helps a neighbour may also help the one you've been stuck on, or reveal a shared bottleneck.
-7. **Return to step 1 of the trial loop** with the most promising candidate. If it fails, come back here and pick the next one. Repeat indefinitely.
-
-There is no "I have tried everything" state. Regressions are data, crashes are data, build errors are data. Keep logging trials.
-
 ## Constraints
 
 Read the "Editable files" and "Read-only files" sections of `project-layout.md` carefully.
@@ -214,7 +184,7 @@ Then, LOOP FOREVER:
 9. **LOG FIRST**: Append **one row** to `experiments/<tag>-log.csv` immediately. The row has the schema's columns in the schema's order: `timestamp`, each benchmark column (active-set benchmarks get their measured value to the locked precision, inactive benchmarks get `N/A`), `status`, `description`. Do this before reverting or committing — the log is the most important artifact and must not be lost to context exhaustion. **The timestamp MUST come from a freshly-issued `date -u +%Y-%m-%dT%H:%M:%S` Bash call in the same turn as the append.** Do not reuse a timestamp from a previous trial, do not estimate, do not skip the field.
 10. If the trial aggregate **improved** (at least 0.5% better than the running best): keep the change, **commit the modified files** (`git add <files> && git commit -m "Trial N: <description>"`).
 11. If the trial aggregate **regressed or stayed the same**, **or** any active benchmark individually regressed by more than 1%: revert all modified files to the previous best (do **not** commit). Never keep a change that improves one benchmark at the cost of another beyond that threshold.
-12. **Go to 1.** This step is mandatory and unconditional. There is no step 13. The only thing that can follow step 12 is step 1 of the next trial. Do not stop to summarize, do not ask the human anything, do not evaluate whether to continue — just go.
+12. Go to 1.
 
 The branch's git log should be a clean record of every winning change. Regressions, build errors, validation failures, and runtime errors are reverted and never committed.
 
@@ -273,16 +243,4 @@ baseline row are the contract for the entire run.
 
 **BIAS TOWARD ACTION**: Don't overthink things. If you are uncertain whether an approach will work, just try it out and see. There is no penalty for a failed trial. 
 
-**NEVER STOP**: The trial loop ends only when the human interrupts you. It has no internal termination condition. The human may be asleep or away from the computer and expects you to keep working indefinitely until they stop you. You are autonomous.
-
-Every behaviour below is a form of stopping and is forbidden:
-
-- **Asking the human whether to continue.** "Should I keep going?", "is this a good stopping point?", "shall I stop here?", "want me to try more?" — all forbidden. The answer is always yes; do not ask.
-- **Declaring the work done.** There is no "optimization complete" state. Even if the current best looks unbeatable, run another trial. A kernel being "already optimal" is not a conclusion you are allowed to reach — only measurement is.
-- **Writing a final report, summary of results, or handoff message.** These imply you are finishing. Progress updates between trials are fine; closing remarks are not. If you catch yourself typing "in summary," "overall," "to conclude," "final results," "as a wrap-up," or similar, delete it and start the next trial.
-- **Claiming optimizations are exhausted.** They are not. See **When you're stuck** under Optimization strategy for the concrete algorithm to run when you feel stuck. Run it — do not stop.
-- **Stopping because trials keep regressing.** Failed trials rule out hypotheses and are valuable data. A long regression streak means you need to profile and shift strategy, not stop.
-- **Stopping because a lot of trials have already run.** There is no trial budget. Trial 200 is as valid as trial 2.
-- **Stopping because nothing new has been tried in a while.** Use the **When you're stuck** checklist to generate a new direction.
-
-If you find yourself about to write a sentence that sounds like "that's as far as I can take this," "I've done what I can," "this is a good place to stop," or "no further gains are likely," **delete it and execute step 1 of the trial loop instead.** The loop runs until the human interrupts you, period.
+**NEVER STOP**: Once the trial loop has begun, do NOT pause to ask the human if you should continue. Do NOT ask "should I keep going?" or "is this a good stopping point?". The human might be asleep, or away from the computer and expects you to continue working *indefinitely* until you are manually stopped. You are autonomous. If you run out of ideas, think harder — re-read the source, re-read the trial history, try combining near-misses, try the opposite of what you've been doing. The loop runs until the human interrupts you, period.
