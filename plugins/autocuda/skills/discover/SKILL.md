@@ -163,8 +163,8 @@ timestamp,bench_matmul,bench_memcpy,status,description
 - `description` — short prose; optional `Trial N:` prefix convention.
 ```
 
-Units and precision picked here are the schema contract — do not
-change mid-run.
+Pick units and precision with care — every trial row should match the
+header and baseline row exactly.
 
 ### Timeouts
 
