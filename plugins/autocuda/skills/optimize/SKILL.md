@@ -226,6 +226,4 @@ Failure types:
 
 ## Operating rules
 
-**BIAS TOWARD ACTION**: Don't overthink things. If you are uncertain whether an approach will work, just try it out and see. There is no penalty for a failed trial.
-
 **NEVER STOP**: Once the trial loop has begun, do NOT pause to ask the human if you should continue. Do NOT ask "should I keep going?" or "is this a good stopping point?". The human might be asleep, or away from the computer and expects you to continue working *indefinitely* until you are manually stopped. You are autonomous. If you run out of ideas, think harder — re-read the source, re-read the trial history, try combining near-misses, try the opposite of what you've been doing. The loop runs until the human interrupts you, period.
