@@ -66,7 +66,7 @@ filtered to the selected axis values.
 5. **Read the editable source files** listed in `project-layout.md`.
 6. **Build, validate, and benchmark.** Run the build and validation commands from `project-layout.md`, then run every benchmark in the active set. This establishes the baseline.
 7. **Initialize the trial log** at `experiments/<tag>-log.csv`. Write the header exactly as `project-layout.md`'s Log schema specifies, then one baseline row: fresh timestamp (`date -u +%Y-%m-%dT%H:%M:%S`), active-set benchmarks' values, `N/A` for inactive benchmarks, `status=baseline`, description `baseline`. Never fabricate the timestamp.
-8. **Lock in the schema.** The header and baseline row are canonical: column order, per-benchmark precision, and any `Trial N:` convention you intend to use must not change for the rest of the run or across compactions.
+8. **Lock in the schema.** The header and baseline row are canonical: column order, per-benchmark precision, and any `Trial N:` convention you intend to use must not change for the rest of the run.
 9. **Start the trial loop.**
 
 ## Optimization strategy
@@ -173,7 +173,7 @@ Do not read prior-run logs, prior source variants (e.g. `experimental/*_opt*.cu`
 
 Then, LOOP FOREVER:
 
-1. Re-read the editable source files and `experiments/<tag>-log.csv`. The CSV header and the baseline row define the schema (column names/order, per-benchmark precision, description convention) that every row you write must match verbatim. Important after a compaction, when the in-context memory of the schema is gone.
+1. Re-read the editable source files and `experiments/<tag>-log.csv`. The CSV header and the baseline row define the schema (column names/order, per-benchmark precision, description convention) that every row you write must match verbatim.
 2. Choose one optimization to try. Follow the hypothesis-driven approach above.
 3. Edit the source file(s).
 4. Build. If the build fails, see **Handling failures** below.
@@ -193,8 +193,8 @@ The branch's git log should be a clean record of every winning change. Regressio
 One row per trial in `experiments/<tag>-log.csv`, with the header + column order set by `project-layout.md`'s Log schema section. Do not commit log files to git.
 
 - `timestamp` — ISO 8601 UTC, from a fresh `date -u +%Y-%m-%dT%H:%M:%S` Bash call on the same turn as the append. Never invent.
-- One column per benchmark (in schema order) — measured value at the locked precision, or `N/A` if the benchmark wasn't run (inactive, failure, or compaction row).
-- `status` — `baseline`, `improved`, `regressed`, `build_error`, `validation_error`, `runtime_error`, or `compaction`.
+- One column per benchmark (in schema order) — measured value at the locked precision, or `N/A` if the benchmark wasn't run (inactive, or a failure row).
+- `status` — `baseline`, `improved`, `regressed`, `build_error`, `validation_error`, or `runtime_error`.
 - `description` — short prose; stick to whatever `Trial N:` convention the baseline row established.
 
 Example for a two-benchmark project (`bench_matmul`, `bench_memcpy`):
@@ -206,7 +206,6 @@ timestamp,bench_matmul,bench_memcpy,status,description
 2026-04-05T14:11:03,152.5000,301.0000,regressed,Trial 2: shared memory tiling
 2026-04-05T14:15:22,N/A,N/A,validation_error,Trial 3: loop unrolling broke edge case
 2026-04-05T14:12:58,N/A,N/A,build_error,"Trial 4: template specialisation (compile error)"
-2026-04-05T14:30:00,N/A,N/A,compaction,context compaction; last trial was Trial 2 shared memory tiling
 ```
 
 ### Handling failures
@@ -220,24 +219,6 @@ Failure types:
 - **`build_error`** — compilation or linking failure. Revert, log, move on (or fix if trivial).
 - **`validation_error`** — the code compiles and runs but produces incorrect results. This is serious — revert immediately. Never keep a change that breaks correctness.
 - **`runtime_error`** — crash, hang, or timeout during benchmarking. Revert, log, move on.
-
-### Handling compactions
-
-Long runs will hit automatic context compactions. A compaction rewrites your
-conversation into a summary; stylistic context that wasn't load-bearing in
-the summary (log schema, description conventions, trial numbering) can drift
-unless you actively re-anchor to the log file.
-
-On any turn where you notice a compaction has occurred since your last
-action (conversation-continuation summary, dramatic drop in recent-trial
-recall, or the system tells you so):
-
-1. `Read` the first ~5 and last ~20 rows of `experiments/<tag>-log.csv`. The header row and baseline row are the schema contract; the last trial row defines the next trial number.
-2. Append one `compaction` marker row: fresh-fetched timestamp, every benchmark column `N/A`, `status=compaction`, description says what got summarised (e.g. `context compaction; last trial was N`).
-3. Resume the trial loop.
-
-Do not "improve" the log format at compaction time — the header and
-baseline row are the contract for the entire run.
 
 ## Operating rules
 
