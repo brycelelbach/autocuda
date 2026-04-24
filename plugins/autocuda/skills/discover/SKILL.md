@@ -155,11 +155,11 @@ timestamp,bench_matmul,bench_memcpy,status,description
 
 - `timestamp` — ISO 8601 UTC (e.g. `2026-04-05T14:32:01`).
 - `bench_matmul` — GFLOP/s, higher is better, 4 decimals. `N/A` for
-  failures, compactions, or when outside the active set.
+  failures or when outside the active set.
 - `bench_memcpy` — GiB/s, higher is better, 4 decimals. Same `N/A`
   rule.
 - `status` — `baseline` | `improved` | `regressed` | `build_error` |
-  `validation_error` | `runtime_error` | `compaction`.
+  `validation_error` | `runtime_error`.
 - `description` — short prose; optional `Trial N:` prefix convention.
 ```
 
