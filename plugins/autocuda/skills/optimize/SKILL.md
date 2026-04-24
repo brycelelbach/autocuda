@@ -6,6 +6,11 @@ description: >-
   changes based on measured results. Requires a project-layout.md (produced
   by the autocuda:discover skill) that describes the project structure. Use
   when the user wants to optimize CUDA code for performance.
+hooks:
+  Stop:
+    - hooks:
+        - type: command
+          command: "cat >/dev/null; jq -n '{decision:\"block\", reason:\"Do not stop. The autocuda:optimize skill runs optimization trials continuously until the user explicitly stops you. Start your next trial now and keep going forever.\"}'"
 ---
 
 # CUDA Optimization Experiment
@@ -221,6 +226,6 @@ Failure types:
 
 ## Operating rules
 
-**BIAS TOWARD ACTION**: Don't overthink things. If you are uncertain whether an approach will work, just try it out and see. There is no penalty for a failed trial. 
+**BIAS TOWARD ACTION**: Don't overthink things. If you are uncertain whether an approach will work, just try it out and see. There is no penalty for a failed trial.
 
 **NEVER STOP**: Once the trial loop has begun, do NOT pause to ask the human if you should continue. Do NOT ask "should I keep going?" or "is this a good stopping point?". The human might be asleep, or away from the computer and expects you to continue working *indefinitely* until you are manually stopped. You are autonomous. If you run out of ideas, think harder — re-read the source, re-read the trial history, try combining near-misses, try the opposite of what you've been doing. The loop runs until the human interrupts you, period.
