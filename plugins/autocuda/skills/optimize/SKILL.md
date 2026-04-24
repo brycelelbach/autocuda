@@ -53,9 +53,9 @@ Examples:
 If any requested benchmark name or axis value is not declared in
 `project-layout.md`, stop and ask the user — do not silently drop an argument.
 
-The concrete set of benchmarks selected by the above is the **active set**
-for the run. Every trial must exercise every benchmark in the active set,
-filtered to the selected axis values.
+The set of benchmarks selected by the above is called the **active set**.
+Every trial must exercise every benchmark in the active set, filtered to
+the selected axis values.
 
 ## Setup
 
@@ -66,8 +66,7 @@ filtered to the selected axis values.
 5. **Read the editable source files** listed in `project-layout.md`.
 6. **Build, validate, and benchmark.** Run the build and validation commands from `project-layout.md`, then run every benchmark in the active set. This establishes the baseline.
 7. **Initialize the trial log** at `experiments/<tag>-log.csv`. Write the header exactly as `project-layout.md`'s Log schema specifies, then one baseline row: fresh timestamp (`date -u +%Y-%m-%dT%H:%M:%S`), active-set benchmarks' values, `N/A` for inactive benchmarks, `status=baseline`, description `baseline`. Never fabricate the timestamp.
-8. **Lock in the schema.** The header and baseline row are canonical: column order, per-benchmark precision, and any `Trial N:` convention you intend to use must not change for the rest of the run.
-9. **Start the trial loop.**
+8. **Start the trial loop.**
 
 ## Optimization strategy
 
@@ -180,20 +179,20 @@ Then, LOOP FOREVER:
 5. Validate. If validation fails, see **Handling failures** below.
 6. Benchmark. Run **every benchmark in the active set** in turn, restricted to the selected axis values. If any benchmark times out or crashes, see **Handling failures** below. Use the timeouts from `project-layout.md`.
 7. Extract each benchmark's metric from its output as described in `project-layout.md`, aggregated within the benchmark using its per-benchmark aggregation (min/max/mean/geomean/...).
-8. Compute the **trial aggregate** across benchmarks using the cross-benchmark aggregation policy from `project-layout.md` (default: geomean of per-benchmark speedup over baseline, inverting for "lower is better" benchmarks). For a single-benchmark active set the aggregate equals that benchmark's speedup.
-9. **LOG FIRST**: Append **one row** to `experiments/<tag>-log.csv` immediately. The row has the schema's columns in the schema's order: `timestamp`, each benchmark column (active-set benchmarks get their measured value to the locked precision, inactive benchmarks get `N/A`), `status`, `description`. Do this before reverting or committing — the log is the most important artifact and must not be lost to context exhaustion. **The timestamp MUST come from a freshly-issued `date -u +%Y-%m-%dT%H:%M:%S` Bash call in the same turn as the append.** Do not reuse a timestamp from a previous trial, do not estimate, do not skip the field.
-10. If the trial aggregate **improved** (at least 0.5% better than the running best): keep the change, **commit the modified files** (`git add <files> && git commit -m "Trial N: <description>"`).
-11. If the trial aggregate **regressed or stayed the same**, **or** any active benchmark individually regressed by more than 1%: revert all modified files to the previous best (do **not** commit). Never keep a change that improves one benchmark at the cost of another beyond that threshold.
+8. Combine the per-benchmark aggregates into one per-trial number using the cross-benchmark aggregation policy from `project-layout.md` (default: geomean of per-benchmark speedup over baseline, inverting for "lower is better" benchmarks). For a single-benchmark active set this equals that benchmark's speedup.
+9. **LOG FIRST**: Append **one row** to `experiments/<tag>-log.csv` immediately. The row has the schema's columns in the schema's order: `timestamp`, each benchmark column (active-set benchmarks get their measured value at the header+baseline-row precision, inactive benchmarks get `N/A`), `status`, `description`. Do this before reverting or committing — the log is the most important artifact and must not be lost to context exhaustion. **The timestamp MUST come from a freshly-issued `date -u +%Y-%m-%dT%H:%M:%S` Bash call in the same turn as the append.** Do not reuse a timestamp from a previous trial, do not estimate, do not skip the field.
+10. If this trial measures at least 0.5% better than the previous commit on the branch: keep the change, **commit the modified files** (`git add <files> && git commit -m "Trial N: <description>"`).
+11. Otherwise — or if any active benchmark individually regressed by more than 1% — revert all modified files to the previous commit (do **not** commit). Never keep a change that improves one benchmark at the cost of another beyond that threshold.
 12. Go to 1.
 
-The branch's git log should be a clean record of every winning change. Regressions, build errors, validation failures, and runtime errors are reverted and never committed.
+The branch's git log should be a clean record of every improvement. Regressions, build errors, validation failures, and runtime errors are reverted and never committed.
 
 ### Logging format
 
 One row per trial in `experiments/<tag>-log.csv`, with the header + column order set by `project-layout.md`'s Log schema section. Do not commit log files to git.
 
 - `timestamp` — ISO 8601 UTC, from a fresh `date -u +%Y-%m-%dT%H:%M:%S` Bash call on the same turn as the append. Never invent.
-- One column per benchmark (in schema order) — measured value at the locked precision, or `N/A` if the benchmark wasn't run (inactive, or a failure row).
+- One column per benchmark (in schema order) — measured value at the precision used by the header and baseline row, or `N/A` if the benchmark wasn't run (inactive, or a failure row).
 - `status` — `baseline`, `improved`, `regressed`, `build_error`, `validation_error`, or `runtime_error`.
 - `description` — short prose; stick to whatever `Trial N:` convention the baseline row established.
 
